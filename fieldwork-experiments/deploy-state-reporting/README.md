@@ -32,6 +32,7 @@ The branch adds a small `runPostActivationPhase()` helper and unit tests. The he
 - warns that the failed phase may also have partially applied;
 - tells the operator to inspect state before retry or rollback;
 - rethrows the exact original error object;
+- treats receipt reporting as best-effort, so a logger/output failure cannot replace the deployment error;
 - does not alter retry behavior, API error classification, telemetry, or rollback state.
 
 `deploy-integration.patch` shows the bounded integration around only two operations:
@@ -61,9 +62,10 @@ The first repair should report known state without claiming the entire deploymen
 3. Legacy script `PUT`: `triggersDeploy()` rejects after code activation.
 4. Success cases emit no failure receipt.
 5. The original `APIError` or `UserError` identity is preserved.
-6. A null or malformed upload version identifier is reported as unavailable, not fabricated.
-7. Output ordering makes the receipt visible before the original error is rendered.
-8. Machine-readable output receives a stable equivalent record.
+6. A receipt-reporting failure cannot replace the original deployment error.
+7. A null or malformed upload version identifier is reported as unavailable, not fabricated.
+8. Output ordering makes the receipt visible before the original error is rendered.
+9. Machine-readable output receives a stable equivalent record.
 
 ## Validation
 
@@ -73,6 +75,6 @@ Executed successfully after correcting the activation-path matrix:
 node fieldwork-experiments/deploy-state-reporting/post-activation-state-reporting.mjs
 ```
 
-The model now covers legacy-upload/container failure, versions-deployment/trigger failure, legacy-upload/trigger failure, exact error preservation, and success without a receipt.
+The model covers legacy-upload/container failure, versions-deployment/trigger failure, legacy-upload/trigger failure, exact error preservation, and success without a receipt.
 
-The package-level helper test and integration patch are committed but unexecuted because this environment cannot clone the workspace or install dependencies. No live deployment or upstream interaction occurred.
+The package-level helper test now also contains the reporting-failure regression, but the package suite and integration patch remain unexecuted because this environment cannot clone the workspace or install dependencies. No live deployment or upstream interaction occurred.
