@@ -1,4 +1,6 @@
 import childProcess from "node:child_process";
+import os from "node:os";
+import path from "node:path";
 import { Miniflare, ProxyClient } from "miniflare";
 import { afterEach, test, vi } from "vitest";
 import { DevRegistry } from "../src/shared/dev-registry";
@@ -14,6 +16,20 @@ async function createReadyMiniflare(): Promise<Miniflare> {
 	});
 	await mf.ready;
 	return mf;
+}
+
+function errorTreeContains(
+	error: unknown,
+	predicate: (candidate: unknown) => boolean
+): boolean {
+	if (predicate(error)) return true;
+	if (error instanceof AggregateError) {
+		return error.errors.some((nested) => errorTreeContains(nested, predicate));
+	}
+	if (error instanceof Error && error.cause !== undefined) {
+		return errorTreeContains(error.cause, predicate);
+	}
+	return false;
 }
 
 afterEach(() => {
@@ -114,4 +130,44 @@ test("Miniflare: a cleanup rejection after runtime disposal keeps workerd termin
 
 	expect(disposeError).toBeDefined();
 	expect(killedDuringFirstDispose).toBe(true);
+});
+
+test("Miniflare: dispose preserves an initialization failure alongside later cleanup failure", async ({
+	expect,
+}) => {
+	const missingScriptPath = path.join(
+		os.tmpdir(),
+		`miniflare-missing-${process.pid}-${Date.now()}.mjs`
+	);
+	const cleanupError = new Error("injected dev registry cleanup failure");
+	const registryDispose = vi
+		.spyOn(DevRegistry.prototype, "dispose")
+		.mockRejectedValueOnce(cleanupError);
+	const mf = new Miniflare({
+		modules: true,
+		scriptPath: missingScriptPath,
+	});
+
+	await expect(mf.ready).rejects.toThrow(path.basename(missingScriptPath));
+
+	let disposeError: unknown;
+	try {
+		await mf.dispose();
+	} catch (error) {
+		disposeError = error;
+	}
+	registryDispose.mockRestore();
+
+	const containsInitialisationFailure = errorTreeContains(
+		disposeError,
+		(error) =>
+			error instanceof Error && error.message.includes(path.basename(missingScriptPath))
+	);
+	const containsCleanupFailure = errorTreeContains(
+		disposeError,
+		(error) => error instanceof Error && error.message.includes(cleanupError.message)
+	);
+
+	expect(containsInitialisationFailure).toBe(true);
+	expect(containsCleanupFailure).toBe(true);
 });
