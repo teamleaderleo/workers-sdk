@@ -57,13 +57,8 @@ export class PluginContext {
 	}
 
 	async disposeMiniflare(): Promise<void> {
-		const miniflare = this.#sharedContext.miniflare;
-		// Clear shared state before awaiting disposal. Callers may deliberately catch
-		// teardown errors to preserve a primary Vite result; retaining the reference
-		// in that case would make later plugin use call setOptions() on an instance
-		// whose disposal controller has already been aborted.
+		await this.#sharedContext.miniflare?.dispose();
 		this.#sharedContext.miniflare = undefined;
-		await miniflare?.dispose();
 	}
 
 	get miniflare(): Miniflare {
