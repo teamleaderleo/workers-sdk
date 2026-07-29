@@ -8,7 +8,7 @@ Upstream contact authorized: `false`
 
 ## Package regression
 
-`packages/miniflare/test/teardown-lifecycle.spec.ts` starts a real Miniflare runtime and observes the actual child-process kill call.
+`packages/miniflare/test/teardown-lifecycle.spec.ts` starts a real Miniflare runtime and inspects the child-process kill spy's `this` context, so assertions only count `SIGKILL` calls made on the child whose executable basename starts with `workerd`.
 
 Run:
 
@@ -18,9 +18,9 @@ pnpm --filter miniflare test -- teardown-lifecycle.spec.ts
 
 The regression now covers four distinct cases:
 
-1. `ProxyClient.dispose()` rejects before `Runtime.dispose()`. The first disposal must still send `SIGKILL`; the vulnerable implementation skips that call.
-2. `ProxyClient.dispose()` remains pending. The test waits until proxy disposal has started, records whether `SIGKILL` was already requested, then releases the injected promise so the deliberately failing pre-fix case can clean up and exit.
-3. `DevRegistry.dispose()` rejects after runtime disposal. This is the negative control: the kill request must already have happened.
+1. `ProxyClient.dispose()` rejects before `Runtime.dispose()`. The first disposal must still send `SIGKILL` to the `workerd` child; the vulnerable implementation skips that call.
+2. `ProxyClient.dispose()` remains pending. The test waits until proxy disposal has started, records whether the `workerd` kill was already requested, then releases the injected promise so the deliberately failing pre-fix case can clean up and exit.
+3. `DevRegistry.dispose()` rejects after runtime disposal. This is the negative control: the `workerd` kill request must already have happened.
 4. initialization fails on a missing script and a later cleanup also rejects. The final error tree must retain both the primary initialization failure and the secondary cleanup failure.
 
 The pending-operation case is deterministic and does not rely on a timer. It distinguishes “runtime termination was requested before another cleanup completed” from “runtime termination eventually happened after the blocking operation was released.”
