@@ -32,7 +32,40 @@ Both Vite dev and preview currently assign their `containerImageTags` cleanup ow
 - clear tags only after successful cleanup, making repeat cleanup cheap;
 - retain tags and warn when cleanup fails so close/exit can retry.
 
-`container-build-cleanup.patch` records a bounded dev/preview candidate. It remains separate from production source pending plugin tests with mocked image preparation and container cleanup.
+`container-build-cleanup.patch` records the first bounded dev/preview candidate. It remains separate from production source pending plugin tests with mocked image preparation and container cleanup.
+
+### One module-global exit callback loses earlier server ownership
+
+Both `dev.ts` and `preview.ts` currently store one module-global `exitCallback`. Every plugin instance replaces that slot when it finishes container preparation.
+
+The exported `cloudflare()` function constructs a fresh `PluginContext` and plugin array on every call. The source therefore permits more than one dev plugin instance or more than one preview plugin instance in the same Node.js process. With the current single-slot exit handler, the most recently prepared same-mode server owns force-exit cleanup and any earlier live server's callback is no longer reachable from the process exit listener.
+
+This is a source-confirmed ownership defect. Ordinary CLI use commonly has one server, so incidence is unknown. Programmatic Vite use, tests, orchestrators, and multiple server instances are the important integration surfaces.
+
+`vite-exit-cleanup-registry.mjs` was executed and passed these controls:
+
+- the current single-slot model cleans only the second of two registered owners;
+- a per-instance callback registry cleans both owners;
+- a failed close-time cleanup retains ownership for an exit retry;
+- a successful close unregisters and avoids duplicate cleanup;
+- preparation failure preserves its exact original error.
+
+`vite-exit-cleanup-registry.patch` supersedes the earlier container patch for implementation review. It combines:
+
+- per-instance force-exit callback registration;
+- registration before asynchronous image preparation;
+- cleanup on preparation failure while preserving the preparation error;
+- cleanup on programmatic preview close;
+- warnings and retained retry ownership when cleanup returns `false`;
+- unregistering only after successful final cleanup.
+
+Required plugin tests:
+
+1. create two same-mode plugin/server instances, assign distinct tags, run the exit registry, and prove both cleanup callbacks run;
+2. close one instance successfully and prove it unregisters without affecting the other;
+3. make cleanup fail on close and succeed on the exit retry;
+4. reject a later preparation step after earlier image work and preserve the preparation error;
+5. verify dev restart cleanup keeps the live instance registered for future tags.
 
 ### Open question: Vite close before Miniflare disposal
 
@@ -61,9 +94,9 @@ Container cleanup is registered only through a process `exit` callback. A progra
 - surface a warning when `cleanupContainers()` returns `false`;
 - clear the tag set after successful cleanup to make repeated cleanup cheap.
 
-`container-build-cleanup.patch` supersedes that candidate for implementation review by also registering ownership before image preparation and cleaning on preparation failure.
+`vite-exit-cleanup-registry.patch` supersedes that candidate for implementation review by also registering ownership before image preparation and preserving every same-mode plugin instance.
 
-This needs a plugin test with mocked image preparation, mocked container cleanup, a programmatic preview close, and a cleanup-failure retry control.
+This needs plugin tests with mocked image preparation, mocked container cleanup, multiple plugin instances, a programmatic preview close, and a cleanup-failure retry control.
 
 ## Shared Vite Miniflare state after a rejected disposal
 
@@ -114,7 +147,7 @@ Hyperdrive disposal stops accepting new connections and deliberately avoids awai
 2. Add phased cleanup and primary-error aggregation.
 3. Add Miniflare component deadlines with named diagnostics.
 4. Harden Vite shared state once Miniflare disposal has a complete bounded contract.
-5. Add Vite dev/preview container ownership before preparation, close-time cleanup, and cleanup-failure reporting.
+5. Add the per-instance Vite container cleanup registry, early ownership, close-time cleanup, and cleanup-failure reporting.
 6. Add a Vitest startup-timeout cleanup contract.
 
 No upstream interaction was performed.
