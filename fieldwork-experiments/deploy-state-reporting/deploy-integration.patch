@@ -9,7 +9,7 @@ diff --git a/packages/deploy-helpers/src/deploy/deploy.ts b/packages/deploy-help
  import { parseBulkInputToObject } from "./helpers/parse-bulk-input";
  import { parseConfigPlacement } from "./helpers/placement";
  import { printBindings } from "./helpers/print-bindings";
-@@ -733,11 +734,20 @@ export default async function deploy(
+@@ -733,11 +734,21 @@ export default async function deploy(
  		callbacks.deployContainers
  	) {
  		assert(versionId && accountId);
@@ -21,6 +21,9 @@ diff --git a/packages/deploy-helpers/src/deploy/deploy.ts b/packages/deploy-help
 +		await runPostActivationPhase(
 +			{
 +				phase: "container rollout",
++				// Container workers are excluded from the versions/deployments path
++				// at this source revision, so this phase follows the legacy script PUT.
++				activationMethod: "legacy script upload",
 +				scriptName,
 +				versionId,
 +				report: (message) => logger.error(message),
@@ -33,7 +36,7 @@ diff --git a/packages/deploy-helpers/src/deploy/deploy.ts b/packages/deploy-help
 +				})
 +		);
  	}
-@@ -748,15 +758,24 @@ export default async function deploy(
+@@ -748,15 +759,25 @@ export default async function deploy(
  	}
  	assert(accountId);
  	// deploy triggers
@@ -50,6 +53,9 @@ diff --git a/packages/deploy-helpers/src/deploy/deploy.ts b/packages/deploy-help
 +	const targets = await runPostActivationPhase(
 +		{
 +			phase: "trigger deployment",
++			activationMethod: canUseNewVersionsDeploymentsApi
++				? "versions deployment"
++				: "legacy script upload",
 +			scriptName,
 +			versionId,
 +			report: (message) => logger.error(message),
