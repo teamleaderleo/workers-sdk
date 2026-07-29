@@ -5,7 +5,7 @@ import {
 } from "./post-activation-state";
 
 describe("post-activation deployment state reporting", () => {
-	test("reports the activated version and preserves the original error", async ({
+	test("reports the activation path and version while preserving the original error", async ({
 		expect,
 	}) => {
 		const report = vi.fn();
@@ -16,6 +16,7 @@ describe("post-activation deployment state reporting", () => {
 			await runPostActivationPhase(
 				{
 					phase: "container rollout",
+					activationMethod: "legacy script upload",
 					scriptName: "example-worker",
 					versionId: "11111111-1111-1111-1111-111111111111",
 					report,
@@ -34,7 +35,13 @@ describe("post-activation deployment state reporting", () => {
 			"deployment failed during container rollout"
 		);
 		expect(report.mock.calls[0][0]).toContain(
+			"Activation method: legacy script upload"
+		);
+		expect(report.mock.calls[0][0]).toContain(
 			"Activated version ID: 11111111-1111-1111-1111-111111111111"
+		);
+		expect(report.mock.calls[0][0]).toContain(
+			"failed phase may also have partially applied"
 		);
 	});
 
@@ -47,6 +54,7 @@ describe("post-activation deployment state reporting", () => {
 			runPostActivationPhase(
 				{
 					phase: "trigger deployment",
+					activationMethod: "versions deployment",
 					scriptName: "example-worker",
 					versionId: "22222222-2222-2222-2222-222222222222",
 					report,
@@ -63,6 +71,7 @@ describe("post-activation deployment state reporting", () => {
 		expect(
 			formatPostActivationFailure({
 				phase: "trigger deployment",
+				activationMethod: "legacy script upload",
 				scriptName: "legacy-worker",
 				versionId: null,
 			})
