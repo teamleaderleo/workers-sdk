@@ -1,0 +1,70 @@
+diff --git a/packages/deploy-helpers/src/deploy/deploy.ts b/packages/deploy-helpers/src/deploy/deploy.ts
+--- a/packages/deploy-helpers/src/deploy/deploy.ts
++++ b/packages/deploy-helpers/src/deploy/deploy.ts
+@@ -43,6 +43,7 @@ import {
+ } from "./helpers/exports-reconciliation";
+ import { helpIfErrorIsSizeOrScriptStartup } from "./helpers/friendly-validator-errors";
+ import { collectPackageDependencies } from "./helpers/package-dependencies";
++import { runPostActivationPhase } from "./helpers/post-activation-state";
+ import { parseBulkInputToObject } from "./helpers/parse-bulk-input";
+ import { parseConfigPlacement } from "./helpers/placement";
+ import { printBindings } from "./helpers/print-bindings";
+@@ -733,11 +734,20 @@ export default async function deploy(
+ 		callbacks.deployContainers
+ 	) {
+ 		assert(versionId && accountId);
+-		await callbacks.deployContainers(config, normalisedContainerConfig, {
+-			versionId,
+-			accountId,
+-			scriptName,
+-		});
++		await runPostActivationPhase(
++			{
++				phase: "container rollout",
++				scriptName,
++				versionId,
++				report: (message) => logger.error(message),
++			},
++			() =>
++				callbacks.deployContainers!(config, normalisedContainerConfig, {
++					versionId,
++					accountId,
++					scriptName,
++				})
++		);
+ 	}
+@@ -748,15 +758,24 @@ export default async function deploy(
+ 	}
+ 	assert(accountId);
+ 	// deploy triggers
+-	const targets = await triggersDeploy({
+-		config,
+-		accountId,
+-		scriptName,
+-		workerTag,
+-		env: props.env,
+-		crons: props.triggers,
+-		firstDeploy: !workerExists,
+-		routes: props.routes,
+-	});
++	const targets = await runPostActivationPhase(
++		{
++			phase: "trigger deployment",
++			scriptName,
++			versionId,
++			report: (message) => logger.error(message),
++		},
++		() =>
++			triggersDeploy({
++				config,
++				accountId,
++				scriptName,
++				workerTag,
++				env: props.env,
++				crons: props.triggers,
++				firstDeploy: !workerExists,
++				routes: props.routes,
++			})
++	);
+ 
+ 	logger.log("Current Version ID:", versionId);
