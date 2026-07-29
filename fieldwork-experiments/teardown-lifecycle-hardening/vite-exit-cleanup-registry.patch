@@ -1,0 +1,200 @@
+diff --git a/packages/vite-plugin-cloudflare/src/plugins/dev.ts b/packages/vite-plugin-cloudflare/src/plugins/dev.ts
+--- a/packages/vite-plugin-cloudflare/src/plugins/dev.ts
++++ b/packages/vite-plugin-cloudflare/src/plugins/dev.ts
+@@ -29,9 +29,11 @@ import type { StaticRouting } from "@cloudflare/workers-shared/utils/types";
+ 
+-let exitCallback = () => {};
++const exitCallbacks = new Set<() => void>();
+ 
+ process.on("exit", () => {
+-	exitCallback();
++	for (const callback of exitCallbacks) {
++		callback();
++	}
+ });
+@@ -39,6 +41,26 @@ process.on("exit", () => {
+ export const devPlugin = createPlugin("dev", (ctx) => {
+ 	let containerImageTags = new Set<string>();
++	let warnCleanupFailure = () => {};
++
++	const cleanupDevContainers = () => {
++		if (!containerImageTags.size) return true;
++		const cleaned = cleanupContainers(getDockerPath(), containerImageTags);
++		if (cleaned) {
++			containerImageTags.clear();
++		} else {
++			warnCleanupFailure();
++		}
++		return cleaned;
++	};
++
++	const cleanupAndMaybeUnregister = () => {
++		const cleaned = cleanupDevContainers();
++		if (cleaned) {
++			exitCallbacks.delete(cleanupDevContainers);
++		}
++		return cleaned;
++	};
+ 
+ 	return {
+ 		buildEnd() {
+@@ -49,8 +71,7 @@ export const devPlugin = createPlugin("dev", (ctx) => {
+ 				ctx.isRestartingDevServer &&
+ 				containerImageTags.size
+ 			) {
+-				const dockerPath = getDockerPath();
+-				cleanupContainers(dockerPath, containerImageTags);
++				cleanupDevContainers();
+ 			}
+ 		},
+ 		async configureServer(viteDevServer) {
+@@ -58,6 +79,11 @@ export const devPlugin = createPlugin("dev", (ctx) => {
+ 			assertIsNotPreview(ctx);
++			warnCleanupFailure = () => {
++				viteDevServer.config.logger.warn(
++					"Unable to remove one or more local development containers."
++				);
++			};
+ 
+ 			const initialOptions = await getDevMiniflareOptions(ctx, viteDevServer);
+@@ -69,9 +95,7 @@ export const devPlugin = createPlugin("dev", (ctx) => {
+ 				} finally {
+ 					if (!ctx.isRestartingDevServer) {
+-						if (containerImageTags.size) {
+-							cleanupContainers(getDockerPath(), containerImageTags);
+-						}
++						cleanupAndMaybeUnregister();
+ 						try {
+ 							await ctx.disposeMiniflare();
+@@ -276,6 +300,20 @@ export const devPlugin = createPlugin("dev", (ctx) => {
+ 						configureOpenAPIForContainerPull(accountId, apiToken);
+ 					}
+ 
+-					await prepareContainerImagesForDev({
++					// Register each plugin instance before asynchronous preparation. A
++					// later image or validation failure must not leave cleanup unaware of
++					// tags that earlier preparation steps may already have made usable.
++					containerImageTags = new Set([
++						...containerImageTags,
++						...containerTagToOptionsMap.keys(),
++					]);
++					exitCallbacks.add(cleanupDevContainers);
++
++					try {
++						await prepareContainerImagesForDev({
+ 						dockerPath: getDockerPath(),
+ 						containerOptions: [...containerTagToOptionsMap.values()],
+ 						onContainerImagePreparationStart: () => {},
+ 						onContainerImagePreparationEnd: () => {},
+ 						logger: viteDevServer.config.logger,
+-					});
+-
+-					containerImageTags = new Set(containerTagToOptionsMap.keys());
++						});
++					} catch (error) {
++						cleanupAndMaybeUnregister();
++						throw error;
++					}
+ 					viteDevServer.config.logger.info(
+@@ -302,11 +340,6 @@ export const devPlugin = createPlugin("dev", (ctx) => {
+-					exitCallback = () => {
+-						if (containerImageTags.size) {
+-							cleanupContainers(getDockerPath(), containerImageTags);
+-						}
+-					};
+ 				}
+ 			}
+ 
+ diff --git a/packages/vite-plugin-cloudflare/src/plugins/preview.ts b/packages/vite-plugin-cloudflare/src/plugins/preview.ts
+--- a/packages/vite-plugin-cloudflare/src/plugins/preview.ts
++++ b/packages/vite-plugin-cloudflare/src/plugins/preview.ts
+@@ -15,9 +15,11 @@ import { handleWebSocket } from "../websockets";
+ 
+-let exitCallback = () => {};
++const exitCallbacks = new Set<() => void>();
+ 
+ process.on("exit", () => {
+-	exitCallback();
++	for (const callback of exitCallbacks) {
++		callback();
++	}
+ });
+@@ -25,6 +27,26 @@ process.on("exit", () => {
+  * Plugin to provide core preview functionality
+  */
+ export const previewPlugin = createPlugin("preview", (ctx) => {
++	let containerImageTags = new Set<string>();
++	let warnCleanupFailure = () => {};
++
++	const cleanupPreviewContainers = () => {
++		if (!containerImageTags.size) return true;
++		const cleaned = cleanupContainers(getDockerPath(), containerImageTags);
++		if (cleaned) {
++			containerImageTags.clear();
++		} else {
++			warnCleanupFailure();
++		}
++		return cleaned;
++	};
++
++	const cleanupAndMaybeUnregister = () => {
++		const cleaned = cleanupPreviewContainers();
++		if (cleaned) {
++			exitCallbacks.delete(cleanupPreviewContainers);
++		}
++		return cleaned;
++	};
++
+ 	return {
+ 		async configurePreviewServer(vitePreviewServer) {
+ 			assertIsPreview(ctx);
++			warnCleanupFailure = () => {
++				vitePreviewServer.config.logger.warn(
++					"Unable to remove one or more local preview containers."
++				);
++			};
+@@ -32,8 +54,12 @@ export const previewPlugin = createPlugin("preview", (ctx) => {
+ 			const closePreviewServer =
+ 				vitePreviewServer.close.bind(vitePreviewServer);
+ 			vitePreviewServer.close = async () => {
+-				await Promise.all([ctx.disposeMiniflare(), closePreviewServer()]);
++				try {
++					await Promise.all([ctx.disposeMiniflare(), closePreviewServer()]);
++				} finally {
++					cleanupAndMaybeUnregister();
++				}
+ 			};
+@@ -98,7 +124,19 @@ export const previewPlugin = createPlugin("preview", (ctx) => {
+ 					configureOpenAPIForContainerPull(accountId, apiToken);
+ 				}
+ 
+-				await prepareContainerImagesForDev({
++				containerImageTags = new Set([
++					...containerImageTags,
++					...containerTagToOptionsMap.keys(),
++				]);
++				exitCallbacks.add(cleanupPreviewContainers);
++
++				try {
++					await prepareContainerImagesForDev({
+ 					dockerPath: getDockerPath(),
+ 					containerOptions: [...containerTagToOptionsMap.values()],
+ 					onContainerImagePreparationStart: () => {},
+ 					onContainerImagePreparationEnd: () => {},
+ 					logger: vitePreviewServer.config.logger,
+-				});
++					});
++				} catch (error) {
++					cleanupAndMaybeUnregister();
++					throw error;
++				}
+ 
+-				const containerImageTags = new Set(containerTagToOptionsMap.keys());
+ 				vitePreviewServer.config.logger.info(
+@@ -111,11 +149,6 @@ export const previewPlugin = createPlugin("preview", (ctx) => {
+-				exitCallback = () => {
+-					if (containerImageTags.size) {
+-						cleanupContainers(dockerPath, containerImageTags);
+-					}
+-				};
+ 			}
