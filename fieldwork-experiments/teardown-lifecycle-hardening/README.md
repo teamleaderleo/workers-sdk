@@ -16,7 +16,7 @@ Run:
 pnpm --filter miniflare test -- teardown-lifecycle.spec.ts
 ```
 
-The regression now covers four distinct cases:
+The regression covers four distinct cases:
 
 1. `ProxyClient.dispose()` rejects before `Runtime.dispose()`. The first disposal must still send `SIGKILL` to the `workerd` child; the vulnerable implementation skips that call.
 2. `ProxyClient.dispose()` remains pending. The test waits until proxy disposal has started, records whether the `workerd` kill was already requested, then releases the injected promise so the deliberately failing pre-fix case can clean up and exit.
@@ -62,11 +62,27 @@ This candidate deliberately leaves broader cleanup aggregation and deadlines for
 
 A single `Promise.allSettled()` over the whole method is too coarse because runtime dispatchers explicitly depend on runtime disposal and instance-registry deletion belongs last.
 
-### Adjacent candidates
+### Adjacent Vite container cleanup candidate
 
 `adjacent-lifecycle-review.md` records follow-up findings across the Vite plugin, Vitest startup/stop, inspector cleanup, Hyperdrive cleanup, and container shutdown.
 
-`preview-container-close.patch` adds container cleanup to programmatic preview-server close while retaining process-exit cleanup as a fallback. This addresses prerendering flows where the preview server closes before the host process exits.
+The current Vite dev and preview container ownership has three related gaps:
+
+- current-session tags are registered only after all asynchronous image preparation succeeds;
+- preview programmatic close does not clean containers;
+- each mode has one module-global force-exit callback, so the most recent same-mode plugin instance replaces earlier cleanup ownership.
+
+Artifacts:
+
+- `container-build-cleanup.mjs` — executed early-registration and retry-ownership model;
+- `container-build-cleanup.patch` — first bounded dev/preview candidate;
+- `preview-container-close.patch` — original narrow preview-close candidate;
+- `vite-exit-cleanup-registry.mjs` — executed single-slot negative control and per-instance registry model;
+- `vite-exit-cleanup-registry.patch` — current candidate, superseding the earlier patches for implementation review.
+
+The current candidate registers each plugin instance before preparation, preserves the original preparation or close error, warns and retains ownership when cleanup fails, cleans preview containers on programmatic close, and unregisters only after successful final cleanup.
+
+These are adjacent artifacts, not production source changes. They require mocked plugin tests before promotion.
 
 A Vite shared-state change that cleared the Miniflare reference before awaiting disposal was prototyped and reverted. With the current vulnerable disposal contract, clearing the reference can remove the only handle available for a second cleanup attempt after an early rejection. That change becomes safe after Miniflare cleanup is must-run and bounded.
 
@@ -86,7 +102,8 @@ A Vite shared-state change that cleared the Miniflare reference before awaiting 
 - A rejected Miniflare disposal still reaches `poolWorkerStopped()`. A pending Miniflare disposal does not, so shared assets watchers can remain registered alongside the live runtime.
 - Vite and Wrangler callers ignore the boolean result from `cleanupContainers()`. Docker cleanup errors are contained, so they cannot skip Miniflare disposal, but failed container removal is silent.
 - Vite preview closes Miniflare and its server concurrently, while container cleanup currently waits for process exit. Programmatic close during prerendering can leave containers until the host process exits.
+- Multiple same-mode Vite plugin instances share one force-exit callback slot. The most recent registration replaces earlier server ownership.
 
 ## Validation boundary
 
-The package tests, patch candidates, self-review notes, and historical trace are committed. The package tests still require execution in a complete Workers SDK checkout with dependencies. No upstream interaction occurred.
+The package tests, patch candidates, self-review notes, historical trace, and dependency-free Vite ownership models are committed. The package and plugin tests still require execution in a complete Workers SDK checkout with dependencies. No upstream interaction occurred.
