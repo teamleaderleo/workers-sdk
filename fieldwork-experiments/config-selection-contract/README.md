@@ -16,15 +16,16 @@ Intended command:
 pnpm --filter @cloudflare/vite-plugin test:ci -- config-selection-contract.spec.ts
 ```
 
-The matrix covers five cases:
+The matrix contains five test groups covering six layouts:
 
 | Case | Wrangler / Workers Utils | Vite plugin | Classification |
 | --- | --- | --- | --- |
 | `wrangler.json` and `wrangler.jsonc` in one directory | `wrangler.json` | `wrangler.jsonc` | compatibility-sensitive divergence |
 | parent `wrangler.json`, root `wrangler.jsonc` | parent JSON | root JSONC | compatibility-sensitive divergence |
+| parent `wrangler.json`, root `wrangler.toml` | parent JSON | root TOML | compatibility-sensitive divergence |
 | only a parent config exists | parent config | zero-config / undefined | deliberate root boundary, insufficiently disclosed |
-| source config plus `.wrangler/deploy/config.json` redirect | generated config | source config | consequential divergence |
-| explicit generated `configPath` | generated config | generated config | supported convergence / escape hatch |
+| source config plus redirect-enabled discovery | generated config | source config | consequential divergence |
+| Vite-relative explicit generated `configPath`, then handed to Workers Utils | generated config | generated config | supported convergence / escape hatch |
 
 ## Source conclusion
 
@@ -79,4 +80,4 @@ Recommended migration:
 
 ## Validation boundary
 
-The retained dependency-free probes passed in the preceding branch. The new package test is committed and source-reviewed but was not executed because this environment cannot clone the repository or install the workspace. No upstream interaction occurred.
+The retained dependency-free probes passed in the preceding branch. The package test now directly covers both nearer JSONC and nearer TOML cases, uses caller-neutral redirect wording, and verifies a relative Vite `configPath` can be resolved and handed to Workers Utils explicitly. It remains committed and source-reviewed but unexecuted because this environment cannot clone the repository or install the workspace. No upstream interaction occurred.
