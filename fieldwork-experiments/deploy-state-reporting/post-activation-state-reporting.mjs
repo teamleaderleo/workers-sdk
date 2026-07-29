@@ -16,7 +16,11 @@ async function runPostActivationPhase(context, operation) {
 	try {
 		return await operation();
 	} catch (error) {
-		context.receipts.push(formatReceipt(context));
+		try {
+			context.report(formatReceipt(context));
+		} catch {
+			// Receipt reporting is secondary to the authoritative operation failure.
+		}
 		throw error;
 	}
 }
@@ -41,12 +45,15 @@ const failureCases = [
 
 for (const scenario of failureCases) {
 	const originalError = new Error(`${scenario.phase} failed`);
+	const receipts = [];
 	const context = {
 		phase: scenario.phase,
 		activationMethod: scenario.activationMethod,
 		scriptName: "example-worker",
 		versionId: "11111111-1111-1111-1111-111111111111",
-		receipts: [],
+		report(receipt) {
+			receipts.push(receipt);
+		},
 	};
 
 	let observedError;
@@ -59,7 +66,7 @@ for (const scenario of failureCases) {
 	}
 
 	assert.equal(observedError, originalError, scenario.name);
-	assert.deepEqual(context.receipts, [
+	assert.deepEqual(receipts, [
 		{
 			activationCompleted: true,
 			activationMethod: scenario.activationMethod,
@@ -73,21 +80,51 @@ for (const scenario of failureCases) {
 }
 
 {
+	const originalError = new Error("trigger deployment failed");
+	const reportingError = new Error("receipt sink failed");
+	let observedError;
+	try {
+		await runPostActivationPhase(
+			{
+				phase: "trigger deployment",
+				activationMethod: "versions deployment",
+				scriptName: "example-worker",
+				versionId: "22222222-2222-2222-2222-222222222222",
+				report() {
+					throw reportingError;
+				},
+			},
+			async () => {
+				throw originalError;
+			}
+		);
+	} catch (error) {
+		observedError = error;
+	}
+	assert.equal(observedError, originalError);
+	assert.notEqual(observedError, reportingError);
+}
+
+{
+	const receipts = [];
 	const context = {
 		phase: "trigger deployment",
 		activationMethod: "versions deployment",
 		scriptName: "example-worker",
-		versionId: "22222222-2222-2222-2222-222222222222",
-		receipts: [],
+		versionId: "33333333-3333-3333-3333-333333333333",
+		report(receipt) {
+			receipts.push(receipt);
+		},
 	};
 	const targets = await runPostActivationPhase(context, async () => [
 		"example.com/*",
 	]);
 	assert.deepEqual(targets, ["example.com/*"]);
-	assert.deepEqual(context.receipts, []);
+	assert.deepEqual(receipts, []);
 }
 
 console.log("PASS: post-activation failures retain the original error");
+console.log("PASS: receipt failures cannot replace the operation error");
 console.log("PASS: receipts identify legacy upload versus versions deployment");
 console.log("PASS: container and trigger failures report possible partial state");
 console.log("PASS: successful post-activation phases emit no failure receipt");
