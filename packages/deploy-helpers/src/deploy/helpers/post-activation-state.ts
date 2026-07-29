@@ -1,7 +1,12 @@
 export type PostActivationPhase = "container rollout" | "trigger deployment";
 
+export type ActivationMethod =
+	| "versions deployment"
+	| "legacy script upload";
+
 export type PostActivationContext = {
 	phase: PostActivationPhase;
+	activationMethod: ActivationMethod;
 	scriptName: string;
 	versionId: string | null;
 	report: (message: string) => void;
@@ -9,6 +14,7 @@ export type PostActivationContext = {
 
 export function formatPostActivationFailure({
 	phase,
+	activationMethod,
 	scriptName,
 	versionId,
 }: Omit<PostActivationContext, "report">): string {
@@ -18,8 +24,10 @@ export function formatPostActivationFailure({
 
 	return [
 		`Worker activation completed for ${scriptName}, but deployment failed during ${phase}.`,
+		`Activation method: ${activationMethod}.`,
 		versionLine,
-		"The Worker may already be serving the new code. Inspect current deployment state before retrying or rolling back.",
+		"The Worker may already be serving the new code, and the failed phase may also have partially applied.",
+		"Inspect current deployment state before retrying or rolling back.",
 	].join("\n");
 }
 
