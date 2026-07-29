@@ -69,12 +69,12 @@ The first repair should report known state without claiming the entire deploymen
 
 ## Validation
 
-Executed successfully after correcting the activation-path matrix:
+The refreshed dependency-free model content was executed with:
 
 ```sh
-node fieldwork-experiments/deploy-state-reporting/post-activation-state-reporting.mjs
+node /tmp/post-activation-state-reporting.mjs
 ```
 
-The model covers legacy-upload/container failure, versions-deployment/trigger failure, legacy-upload/trigger failure, exact error preservation, and success without a receipt.
+The `/tmp` file was byte-for-byte the content subsequently committed at `fieldwork-experiments/deploy-state-reporting/post-activation-state-reporting.mjs`. It passed legacy-upload/container failure, versions-deployment/trigger failure, legacy-upload/trigger failure, exact error preservation, reporting-failure preservation, and success without a receipt.
 
-The package-level helper test now also contains the reporting-failure regression, but the package suite and integration patch remain unexecuted because this environment cannot clone the workspace or install dependencies. No live deployment or upstream interaction occurred.
+The package-level helper test contains the reporting-failure regression, but the package suite and integration patch remain unexecuted because this environment cannot clone the workspace or install dependencies. No live deployment or upstream interaction occurred.
