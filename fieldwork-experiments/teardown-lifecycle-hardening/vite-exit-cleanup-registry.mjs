@@ -70,6 +70,9 @@ function createContainerOwner({ name, registry, cleanupResults = [true] }) {
 				throw error;
 			}
 		},
+		restartCleanup() {
+			cleanup();
+		},
 		close() {
 			cleanupAndMaybeUnregister();
 		},
@@ -138,8 +141,24 @@ function createContainerOwner({ name, registry, cleanupResults = [true] }) {
 	assert.equal(registry.size, 0);
 }
 
+{
+	const registry = createExitRegistry();
+	const owner = createContainerOwner({
+		name: "restart-owner",
+		registry,
+		cleanupResults: [false, true],
+	});
+	await owner.prepare(["old:tag"], async () => {});
+	owner.restartCleanup();
+	await owner.prepare(["new:tag"], async () => {});
+	registry.runExit();
+	assert.deepEqual(owner.cleanedTags, ["old:tag", "new:tag"]);
+	assert.deepEqual(owner.warnings, ["restart-owner: cleanup failed"]);
+}
+
 console.log("PASS: a single exit slot loses earlier cleanup ownership");
 console.log("PASS: a per-instance registry cleans every live server owner");
 console.log("PASS: failed cleanup retains ownership for an exit retry");
 console.log("PASS: successful close unregisters and avoids duplicate cleanup");
 console.log("PASS: preparation failure preserves its original error");
+console.log("PASS: failed restart cleanup retains old tags alongside new tags");
