@@ -37,18 +37,45 @@ The difference is not one accidental conditional. The selectors currently encode
 
 The Vite root boundary is defensible because Vite owns an explicit project root. The extension precedence and redirect behavior are compatibility-sensitive and should not be changed silently. The current API does not expose one inspectable policy record explaining which dimensions differ.
 
+## Precedent review
+
+`precedent-and-policy.md` compares this behavior with TypeScript, Prettier, ESLint, Vite, Biome, Cargo, and recent Workers SDK redirect work.
+
+The main precedent is consistent across those tools:
+
+- automatic discovery and explicit config paths are separate modes;
+- the discovery anchor and boundary are part of the user contract;
+- most single-config tools choose the nearest directory first, then use filename precedence only to break a same-directory tie;
+- project-root tools such as Vite deliberately avoid ancestor inheritance;
+- explainability tools or documented merge/precedence order are important once discovery becomes non-trivial.
+
+Workers Utils' format-first ancestor search is the unusual part: a farther parent JSON can beat a nearer JSONC or TOML. It is existing behavior and therefore compatibility-sensitive, but it should be visible.
+
+Merged upstream PR `cloudflare/workers-sdk#14897` also demonstrates the risk of command-specific redirect booleans: `wrangler triggers deploy` had to opt into the generated-config redirect already used by other deployment commands.
+
 ## Smallest coherent direction
 
-Introduce a shared config-selection policy result rather than immediately forcing identical defaults. It should report:
+Introduce a shared config-selection policy and result rather than immediately forcing identical defaults. It should report:
 
+- invocation profile and command;
 - search start and upward-search boundary;
+- nearest-first, format-first, or merge behavior;
 - extension precedence;
 - whether deploy-config redirect discovery is enabled;
 - requested path, user/source path, selected path, and deploy-config path;
 - environment name passed to config normalization;
+- candidates considered and stable rejection reasons;
 - a stable selection reason such as `explicit`, `root-discovery`, `upward-discovery`, or `deploy-redirect`.
 
-Wrangler and Vite may retain different policies, but package tests should make each difference explicit and tooling should be able to print the selected source/generated relationship.
+Wrangler and Vite may retain different named policy profiles, but package tests should make each difference explicit and tooling should be able to print the selected source/generated relationship.
+
+Recommended migration:
+
+1. characterize current behavior;
+2. centralize mechanics without changing outcomes;
+3. add a `config explain` or stable verbose trace;
+4. warn only on ambiguous layouts where profiles disagree;
+5. consider default alignment only through a documented major-version migration.
 
 ## Validation boundary
 
