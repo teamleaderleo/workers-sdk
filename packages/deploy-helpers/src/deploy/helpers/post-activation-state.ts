@@ -35,8 +35,9 @@ export function formatPostActivationFailure({
  * Runs a deployment phase that occurs after Worker code activation.
  *
  * The original error is deliberately rethrown unchanged. This helper adds a
- * visible state receipt without changing APIError/UserError identity,
- * telemetry classification, or retry behaviour.
+ * best-effort state receipt without changing APIError/UserError identity,
+ * telemetry classification, or retry behaviour. A diagnostic reporting
+ * failure must never replace the authoritative deployment failure.
  */
 export async function runPostActivationPhase<T>(
 	context: PostActivationContext,
@@ -45,7 +46,11 @@ export async function runPostActivationPhase<T>(
 	try {
 		return await operation();
 	} catch (error) {
-		context.report(formatPostActivationFailure(context));
+		try {
+			context.report(formatPostActivationFailure(context));
+		} catch {
+			// Reporting is deliberately best-effort. Preserve the deployment error.
+		}
 		throw error;
 	}
 }
