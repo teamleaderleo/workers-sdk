@@ -16,13 +16,16 @@ Run:
 pnpm --filter miniflare test -- teardown-lifecycle.spec.ts
 ```
 
-The regression now covers three distinct cases:
+The regression now covers four distinct cases:
 
 1. `ProxyClient.dispose()` rejects before `Runtime.dispose()`. The first disposal must still send `SIGKILL`; the vulnerable implementation skips that call.
 2. `ProxyClient.dispose()` remains pending. The test waits until proxy disposal has started, records whether `SIGKILL` was already requested, then releases the injected promise so the deliberately failing pre-fix case can clean up and exit.
 3. `DevRegistry.dispose()` rejects after runtime disposal. This is the negative control: the kill request must already have happened.
+4. initialization fails on a missing script and a later cleanup also rejects. The final error tree must retain both the primary initialization failure and the secondary cleanup failure.
 
 The pending-operation case is deterministic and does not rely on a timer. It distinguishes “runtime termination was requested before another cleanup completed” from “runtime termination eventually happened after the blocking operation was released.”
+
+The initialization-plus-cleanup case proves that child ownership and error preservation are separate requirements. A runtime-first patch can fix the first while phased aggregation is still needed for the second.
 
 ## Source result
 
@@ -33,7 +36,7 @@ The current sequence has two pre-runtime awaited components:
 
 A rejection from either component can skip `Runtime.dispose()`. Browser cleanup now has explicit time bounds from `cloudflare/workers-sdk#14727`, but synchronous construction/kill failures can still reject. Proxy worker termination has no local deadline in this path. A promise from either component that never settles delays runtime termination.
 
-`Runtime.dispose()` itself sends `SIGKILL` synchronously before returning the child exit promise. This permits a small, low-risk repair: invoke runtime disposal before awaiting browser or proxy cleanup, then await the saved runtime promise before closing dispatchers. `runtime-first-dispose.patch` records that candidate.
+`Runtime.dispose()` itself sends `SIGKILL` synchronously before returning the child exit promise. This permits a small repair: invoke runtime disposal before awaiting browser or proxy cleanup, then await the saved runtime promise before closing dispatchers. `runtime-first-dispose.patch` records that candidate.
 
 The Vitest pool catches a rejected `Miniflare.dispose()` and writes it only through `util.debuglog`, then continues to remote-session and shared asset-watcher cleanup. A pending Miniflare disposal blocks those later pool operations.
 
@@ -59,6 +62,14 @@ This candidate deliberately leaves broader cleanup aggregation and deadlines for
 
 A single `Promise.allSettled()` over the whole method is too coarse because runtime dispatchers explicitly depend on runtime disposal and instance-registry deletion belongs last.
 
+### Adjacent candidates
+
+`adjacent-lifecycle-review.md` records follow-up findings across the Vite plugin, Vitest startup/stop, inspector cleanup, Hyperdrive cleanup, and container shutdown.
+
+`preview-container-close.patch` adds container cleanup to programmatic preview-server close while retaining process-exit cleanup as a fallback. This addresses prerendering flows where the preview server closes before the host process exits.
+
+A Vite shared-state change that cleared the Miniflare reference before awaiting disposal was prototyped and reverted. With the current vulnerable disposal contract, clearing the reference can remove the only handle available for a second cleanup attempt after an early rejection. That change becomes safe after Miniflare cleanup is must-run and bounded.
+
 ## Historical research
 
 - `cloudflare/workers-sdk#392` moved cleanup into a `finally` so initialization failure would still reach runtime and loopback cleanup. The current gap is finer-grained: one awaited statement inside that `finally` can still skip later statements.
@@ -73,7 +84,9 @@ A single `Promise.allSettled()` over the whole method is too coarse because runt
 - `CloudflarePoolWorker.start()` increments the shared assets-watcher worker count before awaited startup. Vitest does call `stop()` after an ordinary rejected start, which balances the count. A startup promise that never settles remains different: Vitest's startup timeout rejects its task resolver while the scheduler still awaits `runner.start()`, delaying the later stop path.
 - Multiple pool workers using the same Wrangler config may resolve the same remote proxy session and call its disposal independently. This can affect pool shutdown, but it occurs after Miniflare disposal and cannot explain a workerd child that missed `Runtime.dispose()`.
 - A rejected Miniflare disposal still reaches `poolWorkerStopped()`. A pending Miniflare disposal does not, so shared assets watchers can remain registered alongside the live runtime.
+- Vite and Wrangler callers ignore the boolean result from `cleanupContainers()`. Docker cleanup errors are contained, so they cannot skip Miniflare disposal, but failed container removal is silent.
+- Vite preview closes Miniflare and its server concurrently, while container cleanup currently waits for process exit. Programmatic close during prerendering can leave containers until the host process exits.
 
 ## Validation boundary
 
-The package test, patch candidate, and historical trace are committed. The package test still requires execution in a complete Workers SDK checkout with dependencies. No upstream interaction occurred.
+The package tests, patch candidates, self-review notes, and historical trace are committed. The package tests still require execution in a complete Workers SDK checkout with dependencies. No upstream interaction occurred.
