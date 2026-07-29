@@ -53,6 +53,41 @@ test("Miniflare: dispose kills workerd after proxy cleanup rejects", async ({
 	expect(killedDuringFirstDispose).toBe(true);
 });
 
+test("Miniflare: dispose requests workerd termination while proxy cleanup is pending", async ({
+	expect,
+}) => {
+	const mf = await createReadyMiniflare();
+	let markProxyDisposeStarted!: () => void;
+	let releaseProxyDispose!: () => void;
+	const proxyDisposeStarted = new Promise<void>((resolve) => {
+		markProxyDisposeStarted = resolve;
+	});
+	const proxyDisposeBlocked = new Promise<void>((resolve) => {
+		releaseProxyDispose = resolve;
+	});
+	const proxyDispose = vi
+		.spyOn(ProxyClient.prototype, "dispose")
+		.mockImplementationOnce(() => {
+			markProxyDisposeStarted();
+			return proxyDisposeBlocked;
+		});
+	const kill = vi.spyOn(childProcess.ChildProcess.prototype, "kill");
+
+	const disposePromise = mf.dispose();
+	await proxyDisposeStarted;
+	const killedWhileProxyDisposePending = kill.mock.calls.some(
+		([signal]) => signal === "SIGKILL"
+	);
+
+	// Unblock the injected operation before asserting, so the intentionally
+	// failing pre-fix case still disposes its real workerd child and exits cleanly.
+	releaseProxyDispose();
+	proxyDispose.mockRestore();
+	await disposePromise;
+
+	expect(killedWhileProxyDisposePending).toBe(true);
+});
+
 test("Miniflare: a cleanup rejection after runtime disposal keeps workerd terminated", async ({
 	expect,
 }) => {
