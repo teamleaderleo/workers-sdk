@@ -1,0 +1,103 @@
+# Adjacent lifecycle review
+
+Source branch: `fieldwork/teardown-lifecycle-hardening`
+
+This pass looks beyond the original Vitest/Miniflare child-termination mechanism. It records confirmed adjacent behaviour, rejected explanations, and sequencing constraints for follow-up fixes.
+
+## Vite development shutdown
+
+`packages/vite-plugin-cloudflare/src/plugins/dev.ts` patches `viteDevServer.close()` with this order:
+
+1. await Vite's original `close()`;
+2. clean containers when this is a final shutdown;
+3. await `ctx.disposeMiniflare()`;
+4. catch Miniflare disposal errors to the plugin debug logger.
+
+### Rejected explanation: container cleanup can throw past Miniflare disposal
+
+`cleanupContainers()` is synchronous, but it catches Docker command failures and returns `false`. The Vite caller ignores the return value. Docker cleanup failure therefore does **not** skip `disposeMiniflare()` through an exception.
+
+The actual issue is visibility: final shutdown, restart cleanup, preview exit cleanup, Wrangler local-runtime cleanup, and the rebuild hotkey all ignore the boolean result. A failed container removal can leave containers behind without a diagnostic.
+
+### Open question: Vite close before Miniflare disposal
+
+Development shutdown waits for the Vite server to close before requesting Miniflare termination. This order deserves an integration test with active module-transport requests and Worker WebSockets. A dependency cycle would require Vite's close promise to wait for a connection that only Miniflare/workerd termination can release.
+
+The existing Worker WebSocket upgrade handler destroys in-flight sockets when Miniflare dispatch rejects during shutdown. Existing upgraded WebSockets are coupled to the Worker-side WebSocket and should close when workerd exits. Source review alone does not prove Vite's original `close()` can never wait on another Miniflare-owned transport.
+
+Decisive test:
+
+- start Vite dev with a Worker that maintains an HTTP stream, a Worker WebSocket, and a module-runner request;
+- call `server.close()` programmatically;
+- assert the close promise reaches `ctx.disposeMiniflare()` within a deadline;
+- assert workerd receives `SIGKILL` and every client socket closes.
+
+## Vite preview shutdown
+
+`packages/vite-plugin-cloudflare/src/plugins/preview.ts` closes Miniflare and the Vite preview server concurrently with `Promise.all()`. Its comment explicitly mentions preview-server closure during prerendering.
+
+Container cleanup is registered only through a process `exit` callback. A programmatic preview-server close during prerendering can therefore finish while built-image containers remain until the entire process exits.
+
+`preview-container-close.patch` records a bounded candidate:
+
+- retain process-exit cleanup as a force-exit fallback;
+- also clean containers in the preview server's close wrapper;
+- preserve Miniflare/server close errors;
+- surface a warning when `cleanupContainers()` returns `false`;
+- clear the tag set after successful cleanup to make repeated cleanup cheap.
+
+This needs a plugin test with mocked container cleanup and a programmatic preview close.
+
+## Shared Vite Miniflare state after a rejected disposal
+
+`PluginContext.disposeMiniflare()` clears the shared Miniflare reference only after `dispose()` resolves. The dev close wrapper catches a disposal rejection, so the shared context may retain an instance whose disposal controller has already been aborted. A later plugin use would call `setOptions()` on that disposed instance.
+
+A direct "clear before await" edit was prototyped and then reverted during self-review. With today's vulnerable Miniflare disposal, retaining the reference also preserves the only handle for a second cleanup attempt after an early rejection skipped runtime termination. Clearing it independently could trade a poisoned cache for an unreachable live child.
+
+Safe sequencing:
+
+1. make Miniflare runtime termination must-run;
+2. make Miniflare cleanup complete its bounded phases before rejecting;
+3. then clear Vite shared state before awaiting disposal, because retry ownership is no longer needed;
+4. add a regression that a rejected disposal leaves no reusable disposed instance.
+
+## Vitest runner startup and shutdown
+
+Vitest launches runner stop promises concurrently and stores them for final pool shutdown. One pending `CloudflarePoolWorker.stop()` can hold final close after other workers complete, matching the user-visible parallel-file pattern in `cloudflare/workers-sdk#14903`.
+
+There is a separate startup gap:
+
+- `PoolRunner.start()` awaits the custom worker's `start()` with no timeout around that call;
+- its internal 60-second timeout applies only to the later start handshake;
+- the outer Pool schedules a 90-second resolver rejection but continues awaiting `runner.start()`;
+- a permanently pending `CloudflarePoolWorker.start()` can therefore hold the scheduler before the force-stop path is reached.
+
+`CloudflarePoolWorker.start()` can wait in configuration parsing, remote-proxy setup, Miniflare startup, or runner WebSocket connection. A startup-phase diagnostic should name the last completed phase and trigger explicit cleanup after its deadline.
+
+Decisive test:
+
+- inject a pending promise at each startup boundary;
+- advance fake timers through Vitest's start timeout;
+- assert the custom worker's `stop()` is invoked and shared watcher accounting returns to zero;
+- assert a started workerd child is terminated even when startup never resolves.
+
+## Post-runtime Miniflare cleanup
+
+### Inspector proxy
+
+Inspector disposal closes proxy WebSockets, calls `closeAllConnections()`, and then awaits the HTTP server close callback. It runs after workerd termination, so a failure or delay here cannot prevent the workerd kill request. It can still delay overall `Miniflare.dispose()` and mask an earlier primary failure under sequential cleanup.
+
+### Hyperdrive proxy
+
+Hyperdrive disposal stops accepting new connections and deliberately avoids awaiting `net.Server.close()` because lingering database sockets could block indefinitely. This is an explicit bounded-shutdown choice and a useful precedent for ownership-first cleanup.
+
+## Repair ordering
+
+1. Land the runtime-first Miniflare child-ownership change and its rejection/pending tests.
+2. Add phased cleanup and primary-error aggregation.
+3. Add Miniflare component deadlines with named diagnostics.
+4. Harden Vite shared state once Miniflare disposal has a complete bounded contract.
+5. Add preview close container cleanup and container-failure reporting.
+6. Add a Vitest startup-timeout cleanup contract.
+
+No upstream interaction was performed.
