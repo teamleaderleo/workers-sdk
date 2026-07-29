@@ -5,7 +5,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
 	findWranglerConfig,
 	resolveWranglerConfigPath,
@@ -23,7 +23,7 @@ function createProject(): string {
 
 function writeProjectFile(root: string, relativePath: string, contents = "DUMMY") {
 	const filePath = join(root, relativePath);
-	mkdirSync(join(filePath, ".."), { recursive: true });
+	mkdirSync(dirname(filePath), { recursive: true });
 	writeFileSync(filePath, contents);
 	return filePath;
 }
