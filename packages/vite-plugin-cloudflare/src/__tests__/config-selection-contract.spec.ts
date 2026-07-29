@@ -5,7 +5,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	findWranglerConfig,
 	resolveWranglerConfigPath,
@@ -44,19 +44,25 @@ describe("Wrangler and Vite config selection contract", () => {
 		expect(getValidatedWranglerConfigPath(root, undefined)).toBe(jsoncPath);
 	});
 
-	test("uses different search boundaries and can select different directories", ({
+	test("format-first Wrangler discovery lets parent JSON beat nearer JSONC and TOML", ({
 		expect,
 	}) => {
-		const parent = createProject();
-		const root = join(parent, "app");
-		mkdirSync(root);
-		const parentJsonPath = writeProjectFile(parent, "wrangler.json");
-		const rootJsoncPath = writeProjectFile(root, "wrangler.jsonc");
+		for (const childConfigName of ["wrangler.jsonc", "wrangler.toml"]) {
+			const parent = createProject();
+			const root = join(parent, "app");
+			mkdirSync(root);
+			const parentJsonPath = writeProjectFile(parent, "wrangler.json");
+			const childConfigPath = writeProjectFile(root, childConfigName);
 
-		// Workers Utils searches each format upward before trying the next format.
-		expect(findWranglerConfig(root).configPath).toBe(parentJsonPath);
-		// Vite only checks the configured Vite root.
-		expect(getValidatedWranglerConfigPath(root, undefined)).toBe(rootJsoncPath);
+			// Workers Utils completes the JSON ancestor search before trying the
+			// next supported filename, so the farther parent file wins.
+			expect(findWranglerConfig(root).configPath).toBe(parentJsonPath);
+			// Vite only checks the configured root and therefore selects the nearer
+			// root-owned file.
+			expect(getValidatedWranglerConfigPath(root, undefined)).toBe(
+				childConfigPath
+			);
+		}
 	});
 
 	test("Wrangler searches parents while Vite zero-config mode stays root-only", ({
@@ -71,7 +77,7 @@ describe("Wrangler and Vite config selection contract", () => {
 		expect(getValidatedWranglerConfigPath(root, undefined)).toBeUndefined();
 	});
 
-	test("Wrangler dev-style redirect selects generated config while Vite selects source config", ({
+	test("redirect-enabled Workers Utils selects generated config while Vite selects source config", ({
 		expect,
 	}) => {
 		const root = createProject();
@@ -95,7 +101,7 @@ describe("Wrangler and Vite config selection contract", () => {
 		);
 	});
 
-	test("an explicit generated config path makes both selectors converge", ({
+	test("a Vite-relative explicit generated path can be handed to Workers Utils without redirect discovery", ({
 		expect,
 	}) => {
 		const root = createProject();
@@ -107,9 +113,14 @@ describe("Wrangler and Vite config selection contract", () => {
 			JSON.stringify({ configPath: "../../dist/wrangler.json" })
 		);
 
+		const viteSelectedPath = getValidatedWranglerConfigPath(
+			root,
+			"dist/wrangler.json"
+		);
+		expect(viteSelectedPath).toBe(generatedConfigPath);
 		expect(
 			resolveWranglerConfigPath(
-				{ config: generatedConfigPath },
+				{ config: viteSelectedPath },
 				{ useRedirectIfAvailable: true }
 			)
 		).toMatchObject({
@@ -117,8 +128,5 @@ describe("Wrangler and Vite config selection contract", () => {
 			userConfigPath: generatedConfigPath,
 			redirected: false,
 		});
-		expect(
-			getValidatedWranglerConfigPath(root, resolve(root, "dist/wrangler.json"))
-		).toBe(generatedConfigPath);
 	});
 });
