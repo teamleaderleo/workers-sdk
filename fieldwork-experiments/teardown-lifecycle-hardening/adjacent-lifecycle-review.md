@@ -19,6 +19,21 @@ This pass looks beyond the original Vitest/Miniflare child-termination mechanism
 
 The actual issue is visibility: final shutdown, restart cleanup, preview exit cleanup, Wrangler local-runtime cleanup, and the rebuild hotkey all ignore the boolean result. A failed container removal can leave containers behind without a diagnostic.
 
+### Image-preparation ownership is registered late
+
+`prepareContainerImagesForDev()` processes configured images sequentially. A later build, pull, duplicate-tag cleanup, exposed-port check, or egress-image pull can reject after earlier image work has completed.
+
+Both Vite dev and preview currently assign their `containerImageTags` cleanup ownership only after the entire preparation call resolves. If preparation rejects, the caller has no current-session tag set installed in its close/exit cleanup callback. Source review proves the ownership-registration gap; it does not by itself prove that a container has already started on every failure path.
+
+`container-build-cleanup.mjs` models the desired contract and executed successfully:
+
+- register the candidate tag set before asynchronous preparation;
+- invoke cleanup when preparation rejects while preserving the exact preparation error;
+- clear tags only after successful cleanup, making repeat cleanup cheap;
+- retain tags and warn when cleanup fails so close/exit can retry.
+
+`container-build-cleanup.patch` records a bounded dev/preview candidate. It remains separate from production source pending plugin tests with mocked image preparation and container cleanup.
+
 ### Open question: Vite close before Miniflare disposal
 
 Development shutdown waits for the Vite server to close before requesting Miniflare termination. This order deserves an integration test with active module-transport requests and Worker WebSockets. A dependency cycle would require Vite's close promise to wait for a connection that only Miniflare/workerd termination can release.
@@ -38,7 +53,7 @@ Decisive test:
 
 Container cleanup is registered only through a process `exit` callback. A programmatic preview-server close during prerendering can therefore finish while built-image containers remain until the entire process exits.
 
-`preview-container-close.patch` records a bounded candidate:
+`preview-container-close.patch` records the original narrow candidate:
 
 - retain process-exit cleanup as a force-exit fallback;
 - also clean containers in the preview server's close wrapper;
@@ -46,7 +61,9 @@ Container cleanup is registered only through a process `exit` callback. A progra
 - surface a warning when `cleanupContainers()` returns `false`;
 - clear the tag set after successful cleanup to make repeated cleanup cheap.
 
-This needs a plugin test with mocked container cleanup and a programmatic preview close.
+`container-build-cleanup.patch` supersedes that candidate for implementation review by also registering ownership before image preparation and cleaning on preparation failure.
+
+This needs a plugin test with mocked image preparation, mocked container cleanup, a programmatic preview close, and a cleanup-failure retry control.
 
 ## Shared Vite Miniflare state after a rejected disposal
 
@@ -97,7 +114,7 @@ Hyperdrive disposal stops accepting new connections and deliberately avoids awai
 2. Add phased cleanup and primary-error aggregation.
 3. Add Miniflare component deadlines with named diagnostics.
 4. Harden Vite shared state once Miniflare disposal has a complete bounded contract.
-5. Add preview close container cleanup and container-failure reporting.
+5. Add Vite dev/preview container ownership before preparation, close-time cleanup, and cleanup-failure reporting.
 6. Add a Vitest startup-timeout cleanup contract.
 
 No upstream interaction was performed.
