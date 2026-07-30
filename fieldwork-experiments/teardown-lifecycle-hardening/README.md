@@ -84,6 +84,23 @@ The current candidate registers each plugin instance before preparation, preserv
 
 These are adjacent artifacts, not production source changes. They require mocked plugin tests before promotion.
 
+### Adjacent Vite shared-context ownership candidate
+
+`vite-shared-context-ownership.md` records a broader process-wide ownership problem:
+
+- every `cloudflare()` call receives a fresh `PluginContext` backed by the same module-global `SharedContext`;
+- a second plugin instance can update the Miniflare runtime observed by the first instance;
+- one server's restart counter can make another server misclassify final close as restart cleanup;
+- the tunnel manager, tunnel hostnames, export-type map, and warning latch have the same global ownership boundary.
+
+Artifacts:
+
+- `vite-shared-context-ownership.mjs` — executed global-versus-owner-scoped model;
+- `vite-instance-restart-scope.patch` — narrow candidate moving restart accounting into one `PluginContext`;
+- `vite-shared-context-ownership.md` — source trace, design boundary, and integration matrix.
+
+The restart-counter patch can be reviewed separately. Miniflare and tunnel ownership require a logical-server registry with an explicit handoff between sequential restart generations; simply creating one shared object per factory call would break restart continuity and can leak the old generation.
+
 A Vite shared-state change that cleared the Miniflare reference before awaiting disposal was prototyped and reverted. With the current vulnerable disposal contract, clearing the reference can remove the only handle available for a second cleanup attempt after an early rejection. That change becomes safe after Miniflare cleanup is must-run and bounded.
 
 ## Historical research
@@ -103,7 +120,8 @@ A Vite shared-state change that cleared the Miniflare reference before awaiting 
 - Vite and Wrangler callers ignore the boolean result from `cleanupContainers()`. Docker cleanup errors are contained, so they cannot skip Miniflare disposal, but failed container removal is silent.
 - Vite preview closes Miniflare and its server concurrently, while container cleanup currently waits for process exit. Programmatic close during prerendering can leave containers until the host process exits.
 - Multiple same-mode Vite plugin instances share one force-exit callback slot. The most recent registration replaces earlier server ownership.
+- Multiple `cloudflare()` instances also share Miniflare, restart accounting, tunnel ownership, export types, warnings, and tunnel-hostname state process-wide.
 
 ## Validation boundary
 
-The package tests, patch candidates, self-review notes, historical trace, and dependency-free Vite ownership models are committed. The package and plugin tests still require execution in a complete Workers SDK checkout with dependencies. No upstream interaction occurred.
+The package tests, patch candidates, self-review notes, historical trace, and dependency-free Vite ownership models are committed. The package and plugin tests still require execution in a complete Workers SDK checkout with dependencies. No live multi-server, tunnel, or Docker reproduction ran. No upstream interaction occurred.
