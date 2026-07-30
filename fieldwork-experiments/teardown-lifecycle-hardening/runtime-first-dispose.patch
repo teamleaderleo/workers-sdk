@@ -1,0 +1,37 @@
+diff --git a/packages/miniflare/src/index.ts b/packages/miniflare/src/index.ts
+--- a/packages/miniflare/src/index.ts
++++ b/packages/miniflare/src/index.ts
+@@ -3468,16 +3468,32 @@ export class Miniflare {
+ 		try {
+ 			await this.#waitForReady(/* disposing */ true);
+ 		} finally {
+-			await this.#closeBrowserProcesses();
+-
+ 			// Remove exit hook, we're cleaning up what they would've cleaned up now
+ 			this.#removeExitHook?.();
+ 
+-			// Cleanup as much as possible even if `#init()` threw
++			// Runtime.dispose() sends SIGKILL synchronously before returning the child
++			// exit promise. Start it before awaiting any other cleanup so browser or
++			// proxy cleanup cannot delay ownership discharge for the workerd child.
++			let runtimeDisposePromise: Promise<void>;
++			try {
++				runtimeDisposePromise = Promise.resolve(this.#runtime?.dispose());
++			} catch (error) {
++				runtimeDisposePromise = Promise.reject(error);
++			}
++			// A later cleanup rejection may leave this promise un-awaited. Attach a
++			// handler immediately to prevent a transient unhandled rejection; the
++			// original result is still observed below when earlier cleanup succeeds.
++			void runtimeDisposePromise.catch(() => {});
++
++			// Cleanup as much as possible even if `#init()` threw. These operations
++			// may still reject or remain pending, but workerd termination has already
++			// been requested before either operation starts.
++			await this.#closeBrowserProcesses();
+ 			await this.#proxyClient?.dispose();
+-			await this.#runtime?.dispose();
++			await runtimeDisposePromise;
+ 			// Close the undici Pool used for dispatching fetch requests to the
+ 			// runtime. This must happen after the runtime is disposed, so that
+ 			// in-flight connections are broken and close immediately. Without this,

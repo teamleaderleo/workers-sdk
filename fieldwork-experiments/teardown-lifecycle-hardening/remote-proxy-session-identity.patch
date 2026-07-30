@@ -1,0 +1,97 @@
+diff --git a/packages/remote-bindings/src/maybe-start-or-update-session.ts b/packages/remote-bindings/src/maybe-start-or-update-session.ts
+--- a/packages/remote-bindings/src/maybe-start-or-update-session.ts
++++ b/packages/remote-bindings/src/maybe-start-or-update-session.ts
+@@ -43,10 +43,20 @@ export type WorkerConfigObject = {
+ 	profileDir?: string;
+ };
+ 
++export type RemoteProxyConnectionIdentity = {
++	workerName?: string;
++	accountId?: string;
++	complianceRegion?: Config["compliance_region"];
++	profileDir?: string;
++	auth?: AsyncHook<CfAccount>;
++};
++
+ export type RemoteProxySessionData = {
+ 	session: RemoteProxySession;
+ 	remoteBindings: Record<string, Binding>;
+-	auth?: AsyncHook<CfAccount>;
++	identity: RemoteProxyConnectionIdentity;
+ };
+@@ -63,6 +73,13 @@ export async function maybeStartOrUpdateRemoteProxySession(
+ ): Promise<RemoteProxySessionData | null> {
+ 	const remoteBindings = pickRemoteBindings(workerConfigObject.bindings);
++	const identity: RemoteProxyConnectionIdentity = {
++		workerName: workerConfigObject.name,
++		accountId: workerConfigObject.account_id,
++		complianceRegion: workerConfigObject.complianceRegion,
++		profileDir: workerConfigObject.profileDir,
++		auth,
++	};
+ 	if (
+ 		Object.keys(remoteBindings).length === 0 &&
+ 		!preExistingRemoteProxySessionData?.session
+@@ -70,14 +87,14 @@ export async function maybeStartOrUpdateRemoteProxySession(
+ 		return null;
+ 	}
+-	const authSameAsBefore = deepStrictEqual(
+-		auth,
+-		preExistingRemoteProxySessionData?.auth
++	const connectionIdentityIsSame = deepStrictEqual(
++		identity,
++		preExistingRemoteProxySessionData?.identity
+ 	);
+ 	let remoteProxySession = preExistingRemoteProxySessionData?.session;
+ 
+-	if (!authSameAsBefore) {
++	if (!connectionIdentityIsSame) {
+ 		if (preExistingRemoteProxySessionData?.session) {
+ 			await preExistingRemoteProxySessionData.session.dispose();
+ 		}
+@@ -124,7 +141,7 @@ export async function maybeStartOrUpdateRemoteProxySession(
+ 	return {
+ 		session: remoteProxySession,
+ 		remoteBindings,
+-		auth,
++		identity,
+ 	};
+ }
++
++# Compatibility note
++# Existing callers constructing RemoteProxySessionData in tests must add the
++# identity field. Before production use, decide whether changing workerName
++# alone requires replacement or whether the remote protocol proves it is
++# presentation-only. Account, compliance region, profileDir, and auth changes
++# must not reuse the prior authenticated session.
++
++diff --git a/packages/vitest-pool-workers/src/pool/cloudflare-pool-worker.ts b/packages/vitest-pool-workers/src/pool/cloudflare-pool-worker.ts
++--- a/packages/vitest-pool-workers/src/pool/cloudflare-pool-worker.ts
+++++ b/packages/vitest-pool-workers/src/pool/cloudflare-pool-worker.ts
++@@ -120,13 +120,20 @@ export class CloudflarePoolWorker implements PoolWorker {
++ 		this.mf = undefined;
++ 
++ 		if (this.parsedPoolOptions?.wrangler?.configPath) {
++-			const session = remoteProxySessionsDataMap.get(
++-				this.parsedPoolOptions.wrangler.configPath
++-			)?.session;
++-			await session?.dispose?.()?.catch((err) => {
+++			const configPath = this.parsedPoolOptions.wrangler.configPath;
+++			const sessionData = remoteProxySessionsDataMap.get(configPath);
+++			await sessionData?.session.dispose().catch((err) => {
++ 				this.debug("remote proxy session dispose rejected: %O", err);
++ 			});
+++			// Delete only the exact entry this worker observed. A replacement worker
+++			// may have installed a new session for the same path while disposal was
+++			// pending.
+++			if (remoteProxySessionsDataMap.get(configPath) === sessionData) {
+++				remoteProxySessionsDataMap.delete(configPath);
+++			}
++ 		}
++
++# Vite boundary
++#
++# Do not add a similar process-global delete-only fix to the Vite plugin. Its
++# session must be owned by the logical-server record from candidate #179 so a
++# restart generation can inherit it while true final close disposes and removes
++# it. Config path alone is not a lifecycle owner.

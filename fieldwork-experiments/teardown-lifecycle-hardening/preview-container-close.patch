@@ -1,0 +1,49 @@
+diff --git a/packages/vite-plugin-cloudflare/src/plugins/preview.ts b/packages/vite-plugin-cloudflare/src/plugins/preview.ts
+--- a/packages/vite-plugin-cloudflare/src/plugins/preview.ts
++++ b/packages/vite-plugin-cloudflare/src/plugins/preview.ts
+@@ -25,6 +25,7 @@ process.on("exit", () => {
+  * Plugin to provide core preview functionality
+  */
+ export const previewPlugin = createPlugin("preview", (ctx) => {
++	let cleanupPreviewContainers = () => {};
+ 	return {
+ 		async configurePreviewServer(vitePreviewServer) {
+ 			assertIsPreview(ctx);
+@@ -32,8 +33,13 @@ export const previewPlugin = createPlugin("preview", (ctx) => {
+ 			// Ensure Miniflare is disposed when the preview server is closed during prerendering
+ 			const closePreviewServer =
+ 				vitePreviewServer.close.bind(vitePreviewServer);
+ 			vitePreviewServer.close = async () => {
+-				await Promise.all([ctx.disposeMiniflare(), closePreviewServer()]);
++				try {
++					await Promise.all([ctx.disposeMiniflare(), closePreviewServer()]);
++				} finally {
++					// Prerendering may close the preview server while the host process
++					// continues. Do not rely solely on process exit for container cleanup.
++					cleanupPreviewContainers();
++				}
+ 			};
+@@ -109,12 +115,22 @@ export const previewPlugin = createPlugin("preview", (ctx) => {
+ 				const containerImageTags = new Set(containerTagToOptionsMap.keys());
+ 				vitePreviewServer.config.logger.info(
+ 					colors.dim(colors.yellow("\n⚡️ Containers successfully built.\n"))
+ 				);
+ 
+-				exitCallback = () => {
++				cleanupPreviewContainers = () => {
+ 					if (containerImageTags.size) {
+-						cleanupContainers(dockerPath, containerImageTags);
++						const cleaned = cleanupContainers(dockerPath, containerImageTags);
++						if (cleaned) {
++							containerImageTags.clear();
++						} else {
++							vitePreviewServer.config.logger.warn(
++								"Unable to remove one or more local preview containers."
++							);
++						}
+ 					}
+ 				};
++
++				// Keep process-exit cleanup as a fallback for forceful shutdown.
++				exitCallback = cleanupPreviewContainers;
+ 			}
