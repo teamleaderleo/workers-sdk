@@ -1,0 +1,87 @@
+diff --git a/packages/vite-plugin-cloudflare/src/build-context.ts b/packages/vite-plugin-cloudflare/src/build-context.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/vite-plugin-cloudflare/src/build-context.ts
+@@ -0,0 +1,19 @@
++import { AsyncLocalStorage } from "node:async_hooks";
++
++const viteBuildContext = new AsyncLocalStorage<boolean>();
++
++/**
++ * Runs nested preview/config work as part of one Vite build operation without
++ * leaving a process-wide marker behind for unrelated operations.
++ */
++export function runInViteBuildContext<T>(operation: () => T): T {
++	return viteBuildContext.run(true, operation);
++}
++
++/** Whether the current asynchronous operation belongs to a Vite build. */
++export function isViteBuildContext(): boolean {
++	return viteBuildContext.getStore() === true;
++}
++
+diff --git a/packages/vite-plugin-cloudflare/src/index.ts b/packages/vite-plugin-cloudflare/src/index.ts
+--- a/packages/vite-plugin-cloudflare/src/index.ts
++++ b/packages/vite-plugin-cloudflare/src/index.ts
+@@ -88,10 +88,6 @@ export function cloudflare(pluginConfig: PluginConfig = {}): vite.Plugin[] {
+ 				ctx.setResolvedPluginConfig(
+ 					await resolvePluginConfig(pluginConfig, userConfig, env)
+ 				);
+-
+-				if (env.command === "build") {
+-					process.env.CLOUDFLARE_VITE_BUILD = "true";
+-				}
+ 			},
+ 			async configureServer(viteDevServer) {
+ 				// Patch the `server.restart` method to track whether the server is restarting or not.
+
+diff --git a/packages/vite-plugin-cloudflare/src/plugin-config.ts b/packages/vite-plugin-cloudflare/src/plugin-config.ts
+--- a/packages/vite-plugin-cloudflare/src/plugin-config.ts
++++ b/packages/vite-plugin-cloudflare/src/plugin-config.ts
+@@ -18,6 +18,7 @@ import * as vite from "vite";
+ import * as wrangler from "wrangler";
+ import { DEFAULT_COMPAT_DATE } from "./build-constants";
++import { isViteBuildContext } from "./build-context";
+ import { isForcedBuildOutput } from "./build-output-env";
+@@ -473,7 +474,7 @@ export async function resolvePluginConfig(
+ 	if (viteEnv.isPreview) {
+ 		const workers: PreviewWorker[] = resolvedNewConfig?.cfBuildOutput
+ 			? await readBuildOutputWorkers(root)
+-			: getWorkerConfigs(root, !!process.env.CLOUDFLARE_VITE_BUILD).map(
++			: getWorkerConfigs(root, isViteBuildContext()).map(
+ 					(config) => ({ source: "legacy" as const, config })
+ 				);
+
+diff --git a/packages/vite-plugin-cloudflare/src/plugins/config.ts b/packages/vite-plugin-cloudflare/src/plugins/config.ts
+--- a/packages/vite-plugin-cloudflare/src/plugins/config.ts
++++ b/packages/vite-plugin-cloudflare/src/plugins/config.ts
+@@ -12,6 +12,7 @@ import { normalizePath } from "vite";
+ import { hasAssetsConfigChanged } from "../asset-config";
+ import { createBuildApp, removeAssetsField } from "../build";
++import { runInViteBuildContext } from "../build-context";
+@@ -67,6 +68,9 @@ export const configPlugin = createPlugin("config", (ctx) => {
+ 				];
++			const buildApp =
++				userConfig.builder?.buildApp ?? createBuildApp(ctx.resolvedPluginConfig);
++
+ 			return {
+@@ -86,10 +90,9 @@ export const configPlugin = createPlugin("config", (ctx) => {
+ 				environments: getEnvironmentsConfig(ctx, userConfig, env.mode),
+ 				builder: {
+-					buildApp:
+-						userConfig.builder?.buildApp ??
+-						createBuildApp(ctx.resolvedPluginConfig),
++					buildApp: (builder) =>
++						runInViteBuildContext(() => buildApp(builder)),
+ 				},
+ 			};
+ 		},
++
++# Review boundary
++#
++# This patch scopes preview selection performed from builder.buildApp(), which
++# covers the package's ordinary build/prerender path and custom buildApp hooks.
++# Before production use, add a control for a framework that creates an
++# isPreview server during configResolved(), before buildApp begins. If that is a
++# supported path, the build scope must start at a higher operation boundary
++# rather than reintroducing a sticky process-global marker.
