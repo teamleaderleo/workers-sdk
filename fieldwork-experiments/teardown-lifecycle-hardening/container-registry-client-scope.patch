@@ -1,7 +1,7 @@
 diff --git a/packages/containers-shared/src/login.ts b/packages/containers-shared/src/login.ts
 --- a/packages/containers-shared/src/login.ts
 +++ b/packages/containers-shared/src/login.ts
-@@ -3,8 +3,11 @@ import { spawn } from "node:child_process";
+@@ -3,8 +3,12 @@ import { spawn } from "node:child_process";
  import { UserError } from "@cloudflare/workers-utils";
  import { ImageRegistriesService, ImageRegistryPermissions } from "./client";
  import { OpenAPI } from "./client/core/OpenAPI";
@@ -9,6 +9,7 @@ diff --git a/packages/containers-shared/src/login.ts b/packages/containers-share
 +import type { AccountRegistryToken } from "./client/models/AccountRegistryToken";
 +import type { ImageRegistryCredentialsConfiguration } from "./client/models/ImageRegistryCredentialsConfiguration";
 +import type { OpenAPIConfig } from "./client/core/OpenAPI";
++import type { WranglerLogger } from "./types";
 +
 +export interface RegistryCredentialsClient {
 +	generateImageRegistryCredentials(
@@ -20,13 +21,23 @@ diff --git a/packages/containers-shared/src/login.ts b/packages/containers-share
 +export function createRegistryCredentialsClient(options: {
 +	accountId: string;
 +	apiToken: string;
++	logger: WranglerLogger;
 +	apiBase?: string;
 +}): RegistryCredentialsClient {
++	// Build a closed config from constants and operation inputs. Never spread the
++	// mutable generated OpenAPI singleton: TOKEN, USERNAME, PASSWORD, HEADERS,
++	// LOGGER, or ENCODE_PATH may have been changed by another caller.
 +	const config: OpenAPIConfig = {
-+		...OpenAPI,
 +		BASE: `${options.apiBase ?? "https://api.cloudflare.com/client/v4"}/accounts/${options.accountId}/containers`,
++		VERSION: "1.0.0",
++		WITH_CREDENTIALS: false,
 +		CREDENTIALS: "omit",
++		TOKEN: undefined,
++		USERNAME: undefined,
++		PASSWORD: undefined,
 +		HEADERS: { Authorization: `Bearer ${options.apiToken}` },
++		ENCODE_PATH: encodeURI,
++		LOGGER: options.logger,
 +	};
 +	return {
 +		generateImageRegistryCredentials(domain, requestBody) {
@@ -46,13 +57,13 @@ diff --git a/packages/containers-shared/src/login.ts b/packages/containers-share
 +		},
 +	};
 +}
-@@ -28,7 +51,8 @@ export async function dockerLoginImageRegistry(
+@@ -28,7 +62,8 @@ export async function dockerLoginImageRegistry(
  	pathToDocker: string,
 -	domain: string
 +	domain: string,
-+	client: RegistryCredentialsClient = ImageRegistriesService
++	client: RegistryCredentialsClient
  ) {
-@@ -35,7 +59,7 @@ export async function dockerLoginImageRegistry(
+@@ -35,7 +70,7 @@ export async function dockerLoginImageRegistry(
 -		await ImageRegistriesService.generateImageRegistryCredentials(domain, {
 +		await client.generateImageRegistryCredentials(domain, {
  			expiration_minutes: expirationMinutes,
@@ -60,30 +71,40 @@ diff --git a/packages/containers-shared/src/login.ts b/packages/containers-share
  diff --git a/packages/containers-shared/src/images.ts b/packages/containers-shared/src/images.ts
 --- a/packages/containers-shared/src/images.ts
 +++ b/packages/containers-shared/src/images.ts
-@@ -4,7 +4,7 @@ import { buildImage } from "./build";
+@@ -4,7 +4,10 @@ import { buildImage } from "./build";
 -import { dockerLoginImageRegistry } from "./login";
-+import { dockerLoginImageRegistry, type RegistryCredentialsClient } from "./login";
-@@ -49,7 +49,8 @@ export async function pullImage(
++import {
++	dockerLoginImageRegistry,
++	type RegistryCredentialsClient,
++} from "./login";
+@@ -49,7 +52,8 @@ export async function pullImage(
  	dockerPath: string,
  	options: Exclude<ContainerDevOptions, DockerfileConfig>,
 -	logger: WranglerLogger | ViteLogger
 +	logger: WranglerLogger | ViteLogger,
 +	registryCredentialsClient?: RegistryCredentialsClient
  ) {
-@@ -56,7 +57,11 @@ export async function pullImage(
+@@ -56,7 +60,13 @@ export async function pullImage(
  	const isExternalRegistry = domain !== getCloudflareContainerRegistry();
  	try {
 -		await dockerLoginImageRegistry(dockerPath, domain);
 +		if (!registryCredentialsClient) {
-+			throw new Error("No operation-scoped registry credentials client configured");
++			if (!isExternalRegistry) {
++				throw new UserError(
++					"Cloudflare-managed images require operation-scoped registry credentials."
++				);
++			}
++			throw new Error("No Cloudflare registry client configured for external image");
 +		}
 +		await dockerLoginImageRegistry(dockerPath, domain, registryCredentialsClient);
  	} catch (e) {
-@@ -114,6 +119,7 @@ export async function prepareContainerImagesForDev(args: {
++		if (!isExternalRegistry) throw e;
+ 		// Preserve the existing external-registry warning and public-pull fallback.
+@@ -114,6 +124,7 @@ export async function prepareContainerImagesForDev(args: {
  	logger: WranglerLogger | ViteLogger;
 +	registryCredentialsClient?: RegistryCredentialsClient;
  }): Promise<void> {
-@@ -155,7 +161,12 @@ export async function prepareContainerImagesForDev(args: {
+@@ -155,7 +166,12 @@ export async function prepareContainerImagesForDev(args: {
 -			const pull = await pullImage(dockerPath, options, args.logger);
 +			const pull = await pullImage(
 +				dockerPath,
@@ -104,7 +125,11 @@ diff --git a/packages/containers-shared/src/login.ts b/packages/containers-share
  					const accountId = ...;
 +					const registryCredentialsClient =
 +						apiToken && accountId
-+							? createRegistryCredentialsClient({ accountId, apiToken })
++							? createRegistryCredentialsClient({
++								accountId,
++								apiToken,
++								logger: viteDevServer.config.logger,
++							})
 +							: undefined;
  
  					if (hasCFRegistryImages) {
@@ -125,7 +150,11 @@ diff --git a/packages/containers-shared/src/login.ts b/packages/containers-share
 +@@
 ++			const registryCredentialsClient =
 ++				apiToken && accountId
-++					? createRegistryCredentialsClient({ accountId, apiToken })
+++					? createRegistryCredentialsClient({
+++						accountId,
+++						apiToken,
+++						logger: vitePreviewServer.config.logger,
+++					})
 ++					: undefined;
 +@@
 +-				configureOpenAPIForContainerPull(accountId, apiToken);
@@ -136,11 +165,13 @@ diff --git a/packages/containers-shared/src/login.ts b/packages/containers-share
 +
 +# Review boundaries
 +#
-+# 1. The generated request options above should be factored rather than copied
-+#    before production use.
-+# 2. Existing Wrangler callers may continue using the static generated service
-+#    during migration, but Vite must always pass an immutable operation client.
-+# 3. External-only work without account/token should keep the existing warning
-+#    and public-pull fallback without making any Cloudflare API request.
-+# 4. Tests must prove token/account isolation under concurrency and must never
-+#    snapshot or log bearer token values.
++# 1. No operation config is derived from the mutable global OpenAPI object.
++# 2. dockerLoginImageRegistry has no default global-service fallback.
++# 3. Existing global ImageRegistriesService callers need a separately named
++#    legacy adapter during migration; omission must not compile silently.
++# 4. External-only work without a client performs zero Cloudflare API requests
++#    and follows the existing warning/public-pull fallback.
++# 5. Mocked request tests must contaminate global TOKEN, USERNAME, PASSWORD,
++#    HEADERS, ENCODE_PATH, and LOGGER, then prove none enters the scoped request.
++# 6. Tests must capture request config at dispatch and prove secrets are absent
++#    from logs, errors, snapshots, and retained artifacts.
