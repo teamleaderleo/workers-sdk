@@ -1,0 +1,65 @@
+diff --git a/packages/wrangler/src/index.ts b/packages/wrangler/src/index.ts
+--- a/packages/wrangler/src/index.ts
++++ b/packages/wrangler/src/index.ts
+@@ -8,7 +8,11 @@ import {
+ } from "@cloudflare/workers-utils";
+ import chalk from "chalk";
+-import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
++import {
++	EnvHttpProxyAgent,
++	getGlobalDispatcher,
++	setGlobalDispatcher,
++} from "undici";
+@@ -555,14 +559,27 @@ import type { CommonYargsArgv, SubHelp } from "./yargs-types";
+-
+-if (proxy) {
+-	setGlobalDispatcher(
+-		new EnvHttpProxyAgent({ noProxy: noProxy || "localhost,127.0.0.1,::1" })
+-	);
+-	logger.warn(
+-		`Proxy environment variables detected. We'll use your proxy for fetch requests.`
+-	);
+-}
++
++function installCliProxyDispatcher(): () => Promise<void> {
++	if (!proxy) return async () => {};
++	const previous = getGlobalDispatcher();
++	const dispatcher = new EnvHttpProxyAgent({
++		noProxy: noProxy || "localhost,127.0.0.1,::1",
++	});
++	setGlobalDispatcher(dispatcher);
++	logger.warn(
++		`Proxy environment variables detected. We'll use your proxy for fetch requests.`
++	);
++	return async () => {
++		if (getGlobalDispatcher() === dispatcher) {
++			setGlobalDispatcher(previous);
++		}
++		await dispatcher.close();
++	};
++}
+@@ -2619,7 +2636,18 @@ export async function main(argv: string[]): Promise<void> {
++	const restoreProxyDispatcher = installCliProxyDispatcher();
++	try {
++		return await runMain(argv);
++	} finally {
++		await restoreProxyDispatcher();
++	}
++}
++
++async function runMain(argv: string[]): Promise<void> {
+ 	setupSentry();
+ 	checkMacOSVersion({ shouldThrow: false });
+ 	// existing main body follows unchanged
+ }
++
++# Review boundaries
++#
++# 1. This removes import-time mutation and gives CLI main() a restoration owner.
++# 2. The identity check avoids restoring over a dispatcher deliberately replaced
++#    by another owner while a command was running, but that situation still
++#    needs a documented concurrency contract.
++# 3. Public Wrangler APIs used as libraries need an explicit dispatcher/fetch
++#    context before this lands, otherwise embedded proxy-env support regresses.
++# 4. The bin entry and tests must prove long-running commands retain the proxy
++#    until final settlement and that failure restores the exact prior dispatcher.
