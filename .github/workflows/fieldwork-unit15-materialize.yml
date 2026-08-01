@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fieldwork/unit15-materialize
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -25,6 +28,7 @@ jobs:
           git switch -C upstream/miniflare-runtime-first-disposal 95d9b12f2c707f254b66b446e0bd9fd6b8b7d96d
           python3 <<'PY'
           from pathlib import Path
+          import textwrap
 
           source_path = Path("packages/miniflare/src/index.ts")
           source = source_path.read_text()
@@ -137,13 +141,9 @@ jobs:
           \texpect(killedWorkerdDuringFirstDispose).toBe(true);
           });
           '''
-          # The raw literal keeps escaped tabs readable above; normalize only the
-          # indentation introduced by this workflow's heredoc.
-          import textwrap
           Path("packages/miniflare/test/teardown-lifecycle.spec.ts").write_text(
               textwrap.dedent(test).replace("\\t", "\t")
           )
-
           Path(".changeset/fuzzy-cats-dispose.md").write_text('''---\n"miniflare": patch\n---\n\nDispose the workerd runtime before awaiting other teardown hooks.\n''')
           PY
           git add packages/miniflare/src/index.ts packages/miniflare/test/teardown-lifecycle.spec.ts .changeset/fuzzy-cats-dispose.md
