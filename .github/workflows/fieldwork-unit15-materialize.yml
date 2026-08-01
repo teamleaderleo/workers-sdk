@@ -1,0 +1,151 @@
+name: Fieldwork unit 15 materialize
+
+on:
+  push:
+    branches:
+      - fieldwork/unit15-materialize
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build clean source branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C upstream/miniflare-runtime-first-disposal 95d9b12f2c707f254b66b446e0bd9fd6b8b7d96d
+          python3 <<'PY'
+          from pathlib import Path
+
+          source_path = Path("packages/miniflare/src/index.ts")
+          source = source_path.read_text()
+          old = '''\t\ttry {\n\t\t\tawait this.#waitForReady(/* disposing */ true);\n\t\t} finally {\n\t\t\tawait this.#closeBrowserProcesses();\n\n\t\t\t// Remove exit hook, we're cleaning up what they would've cleaned up now\n\t\t\tthis.#removeExitHook?.();\n\n\t\t\t// Cleanup as much as possible even if `#init()` threw\n\t\t\tawait this.#proxyClient?.dispose();\n\t\t\tawait this.#runtime?.dispose();\n'''
+          new = '''\t\ttry {\n\t\t\tawait this.#waitForReady(/* disposing */ true);\n\t\t} finally {\n\t\t\t// Remove exit hook, we're cleaning up what they would've cleaned up now\n\t\t\tthis.#removeExitHook?.();\n\n\t\t\t// Runtime.dispose() requests workerd termination synchronously before\n\t\t\t// returning its child-exit promise. Start it before awaiting other cleanup\n\t\t\t// so those hooks cannot delay or skip the termination request.\n\t\t\tlet runtimeDisposePromise: Promise<void>;\n\t\t\ttry {\n\t\t\t\truntimeDisposePromise = Promise.resolve(this.#runtime?.dispose());\n\t\t\t} catch (error) {\n\t\t\t\truntimeDisposePromise = Promise.reject(error);\n\t\t\t}\n\t\t\t// An earlier cleanup failure may prevent the final await. Observe the\n\t\t\t// rejection immediately while preserving it for the normal await below.\n\t\t\tvoid runtimeDisposePromise.catch(() => {});\n\n\t\t\t// Cleanup as much as possible even if `#init()` threw.\n\t\t\tawait this.#closeBrowserProcesses();\n\t\t\tawait this.#proxyClient?.dispose();\n\t\t\tawait runtimeDisposePromise;\n'''
+          if source.count(old) != 1:
+              raise SystemExit(f"expected one disposal block, found {source.count(old)}")
+          source_path.write_text(source.replace(old, new))
+
+          test = r'''import childProcess from "node:child_process";
+          import path from "node:path";
+          import { Miniflare, ProxyClient } from "miniflare";
+          import { afterEach, test, vi } from "vitest";
+          import { DevRegistry } from "../src/shared/dev-registry";
+
+          async function createReadyMiniflare(): Promise<Miniflare> {
+          \tconst mf = new Miniflare({
+          \t\tmodules: true,
+          \t\tscript: `export default {
+          \t\t\tfetch() {
+          \t\t\t\treturn new Response("ok");
+          \t\t\t}
+          \t\t}`,
+          \t});
+          \tawait mf.ready;
+          \treturn mf;
+          }
+
+          function requestedWorkerdKill(kill: ReturnType<typeof vi.spyOn>): boolean {
+          \treturn kill.mock.calls.some(([signal], index) => {
+          \t\tconst child = kill.mock.contexts[index];
+          \t\treturn (
+          \t\t\tsignal === "SIGKILL" &&
+          \t\t\tchild instanceof childProcess.ChildProcess &&
+          \t\t\tpath.basename(child.spawnfile).toLowerCase().startsWith("workerd")
+          \t\t);
+          \t});
+          }
+
+          afterEach(() => {
+          \tvi.restoreAllMocks();
+          });
+
+          test("Miniflare: dispose kills workerd after proxy cleanup rejects", async ({
+          \texpect,
+          }) => {
+          \tconst mf = await createReadyMiniflare();
+          \tconst proxyDispose = vi
+          \t\t.spyOn(ProxyClient.prototype, "dispose")
+          \t\t.mockRejectedValueOnce(new Error("injected proxy cleanup failure"));
+          \tconst kill = vi.spyOn(childProcess.ChildProcess.prototype, "kill");
+
+          \tawait expect(mf.dispose()).rejects.toThrow("injected proxy cleanup failure");
+          \tconst killedWorkerdDuringFirstDispose = requestedWorkerdKill(kill);
+
+          \tproxyDispose.mockRestore();
+          \tif (!killedWorkerdDuringFirstDispose) await mf.dispose();
+
+          \texpect(killedWorkerdDuringFirstDispose).toBe(true);
+          });
+
+          test("Miniflare: dispose requests workerd termination while proxy cleanup is pending", async ({
+          \texpect,
+          }) => {
+          \tconst mf = await createReadyMiniflare();
+          \tlet markProxyDisposeStarted!: () => void;
+          \tlet releaseProxyDispose!: () => void;
+          \tconst proxyDisposeStarted = new Promise<void>((resolve) => {
+          \t\tmarkProxyDisposeStarted = resolve;
+          \t});
+          \tconst proxyDisposeBlocked = new Promise<void>((resolve) => {
+          \t\treleaseProxyDispose = resolve;
+          \t});
+          \tconst proxyDispose = vi
+          \t\t.spyOn(ProxyClient.prototype, "dispose")
+          \t\t.mockImplementationOnce(() => {
+          \t\t\tmarkProxyDisposeStarted();
+          \t\t\treturn proxyDisposeBlocked;
+          \t\t});
+          \tconst kill = vi.spyOn(childProcess.ChildProcess.prototype, "kill");
+
+          \tconst disposePromise = mf.dispose();
+          \tawait proxyDisposeStarted;
+          \tconst killedWorkerdWhileProxyDisposePending = requestedWorkerdKill(kill);
+
+          \treleaseProxyDispose();
+          \tproxyDispose.mockRestore();
+          \tawait disposePromise;
+
+          \texpect(killedWorkerdWhileProxyDisposePending).toBe(true);
+          });
+
+          test("Miniflare: cleanup rejection after runtime disposal keeps workerd terminated", async ({
+          \texpect,
+          }) => {
+          \tconst mf = await createReadyMiniflare();
+          \tconst registryDispose = vi
+          \t\t.spyOn(DevRegistry.prototype, "dispose")
+          \t\t.mockRejectedValueOnce(new Error("injected dev registry cleanup failure"));
+          \tconst kill = vi.spyOn(childProcess.ChildProcess.prototype, "kill");
+
+          \tawait expect(mf.dispose()).rejects.toThrow(
+          \t\t"injected dev registry cleanup failure"
+          \t);
+          \tconst killedWorkerdDuringFirstDispose = requestedWorkerdKill(kill);
+
+          \tregistryDispose.mockRestore();
+          \tawait mf.dispose().catch(() => {});
+
+          \texpect(killedWorkerdDuringFirstDispose).toBe(true);
+          });
+          '''
+          # The raw literal keeps escaped tabs readable above; normalize only the
+          # indentation introduced by this workflow's heredoc.
+          import textwrap
+          Path("packages/miniflare/test/teardown-lifecycle.spec.ts").write_text(
+              textwrap.dedent(test).replace("\\t", "\t")
+          )
+
+          Path(".changeset/fuzzy-cats-dispose.md").write_text('''---\n"miniflare": patch\n---\n\nDispose the workerd runtime before awaiting other teardown hooks.\n''')
+          PY
+          git add packages/miniflare/src/index.ts packages/miniflare/test/teardown-lifecycle.spec.ts .changeset/fuzzy-cats-dispose.md
+          git commit -m "fix(miniflare): dispose runtime before teardown hooks"
+          git push --force-with-lease origin HEAD:refs/heads/upstream/miniflare-runtime-first-disposal
