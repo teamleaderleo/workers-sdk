@@ -8,7 +8,9 @@ import type { DeployHelpersContext } from "../src/shared/types";
 
 function createContext(owner: string): DeployHelpersContext {
 	return {
-		fetchResult: vi.fn(async () => owner) as unknown as DeployHelpersContext["fetchResult"],
+		fetchResult: vi.fn(
+			async () => owner
+		) as unknown as DeployHelpersContext["fetchResult"],
 		fetchListResult: vi.fn(
 			async () => []
 		) as unknown as DeployHelpersContext["fetchListResult"],
@@ -27,7 +29,9 @@ function createContext(owner: string): DeployHelpersContext {
 		} as unknown as DeployHelpersContext["logger"],
 		confirm: vi.fn(async () => true),
 		prompt: vi.fn(async () => owner),
-		select: vi.fn(async () => owner) as DeployHelpersContext["select"],
+		select: vi.fn(
+			async () => owner
+		) as DeployHelpersContext["select"],
 	};
 }
 
@@ -37,7 +41,7 @@ describe("deploy helper context ownership", () => {
 	}) => {
 		const contextA = createContext("A");
 		const contextB = createContext("B");
-		let releaseOperation;
+		let releaseOperation!: () => void;
 		const gate = new Promise<void>((resolve) => {
 			releaseOperation = resolve;
 		});
