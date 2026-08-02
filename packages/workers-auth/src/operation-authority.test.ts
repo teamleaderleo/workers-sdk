@@ -1,12 +1,14 @@
 import { describe, it, vi } from "vitest";
 import { createOAuthFlow } from "./flow";
-import type { AuthConfigStorage } from "./config-file/auth";
+import type {
+	AuthConfigStorage,
+	UserAuthConfig,
+} from "./config-file/auth";
 import type {
 	TemporaryAccountStorage,
 	TemporaryPreviewAccount,
 } from "./config-file/temporary";
 import type { OAuthFlowContext } from "./context";
-import type { UserAuthConfig } from "./config-file/auth";
 
 function createStorage(initial: UserAuthConfig): AuthConfigStorage {
 	let value: UserAuthConfig | undefined = initial;
@@ -113,7 +115,7 @@ describe("OAuth flow operation authority", () => {
 		expect,
 	}) => {
 		const flow = createTestFlow();
-		let releaseOperation;
+		let releaseOperation!: () => void;
 		const gate = new Promise<void>((resolve) => {
 			releaseOperation = resolve;
 		});
@@ -149,7 +151,7 @@ describe("OAuth flow operation authority", () => {
 		const flow = createTestFlow({
 			temporaryStorage: createTemporaryStorage(temporaryAccount),
 		});
-		let releaseOperation;
+		let releaseOperation!: () => void;
 		const gate = new Promise<void>((resolve) => {
 			releaseOperation = resolve;
 		});
