@@ -1,6 +1,10 @@
 import { initDeployHelpersContext } from "@cloudflare/deploy-helpers";
-import { logger } from "@cloudflare/deploy-helpers/context";
-import { describe, it } from "vitest";
+import {
+	confirm,
+	fetchResult,
+	logger,
+} from "@cloudflare/deploy-helpers/context";
+import { describe, it, vi } from "vitest";
 
 describe("context singleton", () => {
 	// Verifies that both package entry points (. and ./context) share the same
@@ -21,5 +25,69 @@ describe("context singleton", () => {
 		});
 
 		expect(logger).toBe(mockLogger);
+	});
+
+	it("lets a later initialization replace a pending operation's live context", async ({
+		expect,
+	}) => {
+		let releaseOperation!: () => void;
+		const operationGate = new Promise<void>((resolve) => {
+			releaseOperation = resolve;
+		});
+
+		const aLog = vi.fn();
+		const aFetch = vi.fn(async () => "response-a");
+		const aConfirm = vi.fn(async () => false);
+		initDeployHelpersContext({
+			logger: { debug: vi.fn(), log: aLog } as never,
+			fetchResult: aFetch as never,
+			fetchListResult: vi.fn() as never,
+			fetchPagedListResult: vi.fn() as never,
+			fetchKVGetValue: vi.fn() as never,
+			confirm: aConfirm as never,
+			prompt: vi.fn() as never,
+			select: vi.fn() as never,
+		});
+
+		const pendingOperation = (async () => {
+			await operationGate;
+			const response = await (
+				fetchResult as unknown as () => Promise<string>
+			)();
+			(logger as unknown as { log(message: string): void }).log(
+				"operation-a"
+			);
+			const accepted = await (
+				confirm as unknown as () => Promise<boolean>
+			)();
+			return { accepted, response };
+		})();
+
+		const bLog = vi.fn();
+		const bFetch = vi.fn(async () => "response-b");
+		const bConfirm = vi.fn(async () => true);
+		initDeployHelpersContext({
+			logger: { debug: vi.fn(), log: bLog } as never,
+			fetchResult: bFetch as never,
+			fetchListResult: vi.fn() as never,
+			fetchPagedListResult: vi.fn() as never,
+			fetchKVGetValue: vi.fn() as never,
+			confirm: bConfirm as never,
+			prompt: vi.fn() as never,
+			select: vi.fn() as never,
+		});
+
+		releaseOperation();
+
+		await expect(pendingOperation).resolves.toEqual({
+			accepted: true,
+			response: "response-b",
+		});
+		expect(aFetch).not.toHaveBeenCalled();
+		expect(aLog).not.toHaveBeenCalled();
+		expect(aConfirm).not.toHaveBeenCalled();
+		expect(bFetch).toHaveBeenCalledOnce();
+		expect(bLog).toHaveBeenCalledWith("operation-a");
+		expect(bConfirm).toHaveBeenCalledOnce();
 	});
 });
