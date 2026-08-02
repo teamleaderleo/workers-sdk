@@ -30,10 +30,8 @@ describe("context singleton", () => {
 	it("lets a later initialization replace a pending operation's live context", async ({
 		expect,
 	}) => {
-		let releaseOperation!: () => void;
-		const operationGate = new Promise<void>((resolve) => {
-			releaseOperation = resolve;
-		});
+		const { promise: operationGate, resolve: releaseOperation } =
+			Promise.withResolvers<void>();
 
 		const aLog = vi.fn();
 		const aFetch = vi.fn(async () => "response-a");
@@ -51,15 +49,14 @@ describe("context singleton", () => {
 
 		const pendingOperation = (async () => {
 			await operationGate;
-			const response = await (
-				fetchResult as unknown as () => Promise<string>
-			)();
-			(logger as unknown as { log(message: string): void }).log(
-				"operation-a"
-			);
-			const accepted = await (
-				confirm as unknown as () => Promise<boolean>
-			)();
+			const liveFetch = fetchResult as unknown as () => Promise<string>;
+			const liveLogger = logger as unknown as {
+				log(message: string): void;
+			};
+			const liveConfirm = confirm as unknown as () => Promise<boolean>;
+			const response = await liveFetch();
+			liveLogger.log("operation-a");
+			const accepted = await liveConfirm();
 			return { accepted, response };
 		})();
 
