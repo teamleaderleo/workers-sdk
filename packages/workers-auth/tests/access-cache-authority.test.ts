@@ -1,3 +1,4 @@
+import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import {
 	afterAll,
@@ -8,7 +9,11 @@ import {
 	it,
 	vi,
 } from "vitest";
-import { clearAccessCaches, getAccessHeaders } from "../src/access";
+import {
+	clearAccessCaches,
+	domainUsesAccess,
+	getAccessHeaders,
+} from "../src/access";
 import { mswAccessHandlers } from "../src/test-helpers/msw-handlers/access";
 
 const msw = setupServer(...mswAccessHandlers);
@@ -76,5 +81,33 @@ describe("Access cache authority", () => {
 				"Only CLOUDFLARE_ACCESS_CLIENT_ID was found"
 			)
 		);
+	});
+
+	it("retries Access detection after a transient probe failure", async ({
+		expect,
+	}) => {
+		let attempts = 0;
+		msw.use(
+			http.get("https://access-protected.com/", () => {
+				attempts++;
+				if (attempts === 1) {
+					return HttpResponse.error();
+				}
+				return HttpResponse.json(null, {
+					status: 302,
+					headers: {
+						location: "access-protected-com.cloudflareaccess.com",
+					},
+				});
+			})
+		);
+
+		await expect(
+			domainUsesAccess("access-protected.com", silentLogger)
+		).resolves.toBe(false);
+		await expect(
+			domainUsesAccess("access-protected.com", silentLogger)
+		).resolves.toBe(true);
+		expect(attempts).toBe(2);
 	});
 });
