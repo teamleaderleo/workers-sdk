@@ -3,7 +3,7 @@ import { once } from "node:events";
 import path from "node:path";
 import { Miniflare, ProxyClient } from "miniflare";
 import { afterEach, test, vi } from "vitest";
-import { DevRegistry } from "../src/shared/dev-registry";
+import { WebSocketServer } from "ws";
 
 async function createReadyMiniflare(): Promise<Miniflare> {
 	const mf = new Miniflare({
@@ -94,21 +94,23 @@ test("Miniflare: dispose requests workerd termination while proxy cleanup is pen
 	expect(killedWorkerdWhileProxyDisposePending).toBe(true);
 });
 
-test("Miniflare: cleanup rejection after runtime disposal keeps workerd terminated", async ({
+test("Miniflare: cleanup throw after runtime disposal keeps workerd terminated", async ({
 	expect,
 }) => {
 	const mf = await createReadyMiniflare();
-	const registryDispose = vi
-		.spyOn(DevRegistry.prototype, "dispose")
-		.mockRejectedValueOnce(new Error("injected dev registry cleanup failure"));
+	const webSocketClose = vi
+		.spyOn(WebSocketServer.prototype, "close")
+		.mockImplementationOnce(() => {
+			throw new Error("injected WebSocket cleanup failure");
+		});
 	const kill = vi.spyOn(childProcess.ChildProcess.prototype, "kill");
 
 	await expect(mf.dispose()).rejects.toThrow(
-		"injected dev registry cleanup failure"
+		"injected WebSocket cleanup failure"
 	);
 	const killedWorkerdDuringFirstDispose = findKilledWorkerd(kill) !== undefined;
 
-	registryDispose.mockRestore();
+	webSocketClose.mockRestore();
 	await mf.dispose().catch(() => {});
 
 	expect(killedWorkerdDuringFirstDispose).toBe(true);
