@@ -6,15 +6,17 @@ import {
 } from "@cloudflare/deploy-helpers/context";
 import { describe, it, vi } from "vitest";
 
-describe("context singleton", () => {
+describe("context routing", () => {
 	// Verifies that both package entry points (. and ./context) share the same
 	// context module. This only holds if tsup's splitting is enabled — if it's
 	// disabled, each entry bundles its own copy and this test will fail.
-	it("init from main entry propagates to context entry", ({ expect }) => {
-		const mockLogger = { debug: () => {}, log: () => {} };
+	it("forwards context-entry calls after initialization from the main entry", ({
+		expect,
+	}) => {
+		const log = vi.fn();
 
 		initDeployHelpersContext({
-			logger: mockLogger as never,
+			logger: { debug: vi.fn(), log } as never,
 			fetchResult: (() => {}) as never,
 			fetchListResult: (() => {}) as never,
 			fetchPagedListResult: (() => {}) as never,
@@ -24,10 +26,11 @@ describe("context singleton", () => {
 			select: (() => {}) as never,
 		});
 
-		expect(logger).toBe(mockLogger);
+		logger.log("sentinel");
+		expect(log).toHaveBeenCalledWith("sentinel");
 	});
 
-	it("lets a later initialization replace a pending operation's live context", async ({
+	it("retains the context active when an overlapping operation started", async ({
 		expect,
 	}) => {
 		const { promise: operationGate, resolve: releaseOperation } =
@@ -77,14 +80,14 @@ describe("context singleton", () => {
 		releaseOperation();
 
 		await expect(pendingOperation).resolves.toEqual({
-			accepted: true,
-			response: "response-b",
+			accepted: false,
+			response: "response-a",
 		});
-		expect(aFetch).not.toHaveBeenCalled();
-		expect(aLog).not.toHaveBeenCalled();
-		expect(aConfirm).not.toHaveBeenCalled();
-		expect(bFetch).toHaveBeenCalledOnce();
-		expect(bLog).toHaveBeenCalledWith("operation-a");
-		expect(bConfirm).toHaveBeenCalledOnce();
+		expect(aFetch).toHaveBeenCalledOnce();
+		expect(aLog).toHaveBeenCalledWith("operation-a");
+		expect(aConfirm).toHaveBeenCalledOnce();
+		expect(bFetch).not.toHaveBeenCalled();
+		expect(bLog).not.toHaveBeenCalled();
+		expect(bConfirm).not.toHaveBeenCalled();
 	});
 });
