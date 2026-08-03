@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { DeployHelpersContext } from "./types";
 import type {
 	FetchKVGetValueFetcher,
 	FetchListResultFetcher,
@@ -7,6 +6,7 @@ import type {
 	FetchResultFetcher,
 	Logger,
 } from "@cloudflare/workers-utils";
+import type { DeployHelpersContext } from "./types";
 
 const contextStorage = new AsyncLocalStorage<DeployHelpersContext>();
 let fallbackContext: DeployHelpersContext | undefined;
