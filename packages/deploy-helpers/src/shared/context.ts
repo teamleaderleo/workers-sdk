@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { DeployHelpersContext } from "./types";
 import type {
 	FetchKVGetValueFetcher,
@@ -7,38 +8,74 @@ import type {
 	Logger,
 } from "@cloudflare/workers-utils";
 
-/**
- * Module-level context globals for deploy-helpers.
- *
- * These are typed as non-nullable but are undefined until initDeployHelpersContext()
- * is called. Consumers must import the live binding directly (e.g. `import { logger }`)
- * and NOT destructure or cache the value at module-load time, otherwise they will
- * capture `undefined` before init runs.
- *
- * Example:
- *   import { logger } from "./context";  // correct: live binding
- *   const { logger } = await import("./context");  // WRONG: captures undefined
- */
-export let logger: Logger;
-export let fetchResult: FetchResultFetcher;
-export let fetchListResult: FetchListResultFetcher;
-export let fetchPagedListResult: FetchPagedListResultFetcher;
-export let fetchKVGetValue: FetchKVGetValueFetcher;
-export let confirm: DeployHelpersContext["confirm"];
-export let prompt: DeployHelpersContext["prompt"];
-export let select: DeployHelpersContext["select"];
+const contextStorage = new AsyncLocalStorage<DeployHelpersContext>();
+let fallbackContext: DeployHelpersContext | undefined;
+
+function getDeployHelpersContext(): DeployHelpersContext {
+	const context = contextStorage.getStore() ?? fallbackContext;
+	if (!context) {
+		throw new Error(
+			"Deploy helpers context must be initialized before it is used."
+		);
+	}
+	return context;
+}
+
+type FunctionContextKey =
+	| "fetchResult"
+	| "fetchListResult"
+	| "fetchPagedListResult"
+	| "fetchKVGetValue"
+	| "confirm"
+	| "prompt"
+	| "select";
+
+function forwardFunction<Key extends FunctionContextKey>(
+	key: Key
+): DeployHelpersContext[Key] {
+	return ((...args: unknown[]) => {
+		const fn = getDeployHelpersContext()[key] as (
+			...args: unknown[]
+		) => unknown;
+		return fn(...args);
+	}) as DeployHelpersContext[Key];
+}
 
 /**
- * Set the global context for deploy-helpers. Must be called once at
- * startup before any deploy-helpers function that needs these values.
+ * Forwarding adapters for the active deploy-helper operation.
+ *
+ * `initDeployHelpersContext()` installs a context in the current async chain.
+ * Operations that start before another initialization retain their own owner,
+ * while sequential callers keep the existing initializer-based API.
+ */
+export const logger: Logger = new Proxy({} as Logger, {
+	get(_target, property) {
+		const currentLogger = getDeployHelpersContext().logger;
+		const value = Reflect.get(currentLogger, property, currentLogger) as unknown;
+		return typeof value === "function" ? value.bind(currentLogger) : value;
+	},
+});
+export const fetchResult: FetchResultFetcher = forwardFunction("fetchResult");
+export const fetchListResult: FetchListResultFetcher =
+	forwardFunction("fetchListResult");
+export const fetchPagedListResult: FetchPagedListResultFetcher = forwardFunction(
+	"fetchPagedListResult"
+);
+export const fetchKVGetValue: FetchKVGetValueFetcher =
+	forwardFunction("fetchKVGetValue");
+export const confirm: DeployHelpersContext["confirm"] =
+	forwardFunction("confirm");
+export const prompt: DeployHelpersContext["prompt"] = forwardFunction("prompt");
+export const select: DeployHelpersContext["select"] = forwardFunction("select");
+
+/**
+ * Set the deploy-helper context for the current async operation.
+ *
+ * The fallback preserves existing sequential and module-initialization callers.
+ * AsyncLocalStorage keeps already-started overlapping operations bound to the
+ * context active when their asynchronous work was created.
  */
 export function initDeployHelpersContext(ctx: DeployHelpersContext): void {
-	logger = ctx.logger;
-	fetchResult = ctx.fetchResult;
-	fetchListResult = ctx.fetchListResult;
-	fetchPagedListResult = ctx.fetchPagedListResult;
-	fetchKVGetValue = ctx.fetchKVGetValue;
-	confirm = ctx.confirm;
-	prompt = ctx.prompt;
-	select = ctx.select;
+	fallbackContext = ctx;
+	contextStorage.enterWith(ctx);
 }
