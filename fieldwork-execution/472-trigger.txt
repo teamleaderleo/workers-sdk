@@ -1,0 +1,1 @@
+Trigger owned operation-scope materialization after opening the execution carrier.
