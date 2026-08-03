@@ -1,0 +1,111 @@
+diff --git a/packages/workers-auth/src/flow.ts b/packages/workers-auth/src/flow.ts
+--- a/packages/workers-auth/src/flow.ts
++++ b/packages/workers-auth/src/flow.ts
+@@
+-import { getRevokeUrlFromEnv } from "./env-vars";
++import { getRevokeUrlFromEnv, getTokenUrlFromEnv } from "./env-vars";
+@@
+ 	let activeProfile = "default";
++	const refreshes = new Map<string, Promise<boolean>>();
+@@
+-	async function refreshToken(profile?: string): Promise<boolean> {
++	async function performTokenRefresh(
++		storage: AuthConfigStorage,
++		clientId: string
++	): Promise<boolean> {
+ 		// `exchangeRefreshTokenForAccessToken` reads the refresh token fresh from
+ 		// disk on every call, so we always pick up the latest rotation written by a
+ 		// sibling Wrangler process. Refresh tokens are single-use, so a long-lived
+ 		// process such as `wrangler dev` would otherwise send a stale value and get
+ 		// a 401 from the token endpoint.
+-		const storage = getStorage(profile);
+-
+ 		try {
+@@
+-				getClientId(),
++				clientId,
+ 				storage
+@@
+ 		}
+ 	}
++
++	function refreshToken(profile?: string): Promise<boolean> {
++		const resolvedProfile = profile ?? activeProfile;
++		const storage = getStorage(resolvedProfile);
++		const clientId = getClientId();
++		const key = JSON.stringify([
++			resolvedProfile,
++			storage.path(),
++			clientId,
++			getTokenUrlFromEnv(),
++		]);
++		const existing = refreshes.get(key);
++		if (existing) {
++			return existing;
++		}
++
++		const pending = performTokenRefresh(storage, clientId).finally(() => {
++			if (refreshes.get(key) === pending) {
++				refreshes.delete(key);
++			}
++		});
++		refreshes.set(key, pending);
++		return pending;
++	}
++
+diff --git a/packages/workers-auth/src/core/factory.ts b/packages/workers-auth/src/core/factory.ts
+--- a/packages/workers-auth/src/core/factory.ts
++++ b/packages/workers-auth/src/core/factory.ts
+@@
+ 	async function fetchAccountsPaged<ResponseType>(
+ 		complianceConfig: ComplianceConfig,
+-		resource: string
++		resource: string,
++		credentials: ApiCredentials
+ 	): Promise<ResponseType[]> {
+-		const result = await loginOrRefreshIfRequired(complianceConfig);
+-		if (!result.loggedIn) {
+-			throw new UserError(
+-				`Not logged in. ${NOT_LOGGED_IN_ERROR_BODIES[result.reason]}${NOT_LOGGED_IN_WHOAMI_TIP}`,
+-				{ telemetryMessage: "cfetch auth login required" }
+-			);
+-		}
+-		const credentials = requireApiToken();
+-
+ 		const results: ResponseType[] = [];
+@@
+ 	): Promise<Account[]> {
+ 		const { throwOnEmpty = true } = options;
++		const result = await loginOrRefreshIfRequired(complianceConfig);
++		if (!result.loggedIn) {
++			throw new UserError(
++				`Not logged in. ${NOT_LOGGED_IN_ERROR_BODIES[result.reason]}${NOT_LOGGED_IN_WHOAMI_TIP}`,
++				{ telemetryMessage: "cfetch auth login required" }
++			);
++		}
++		const credentials = requireApiToken();
+ 
+ 		const [accountsRes, membershipsRes] = await Promise.allSettled([
+-			fetchAccountsPaged<Account>(complianceConfig, `/accounts`),
++			fetchAccountsPaged<Account>(
++				complianceConfig,
++				`/accounts`,
++				credentials
++			),
+ 			fetchAccountsPaged<{ account: Account }>(
+ 				complianceConfig,
+-				`/memberships`
++				`/memberships`,
++				credentials
+ 			),
+ 		]);
+
+# Required controls before promotion:
+# - apply both source hunks to one current-head branch;
+# - execute packages/workers-auth/tests/refresh-singleflight.test.ts;
+# - add a factory-level assertion that /accounts and /memberships receive the
+#   same captured ApiCredentials object after exactly one refresh;
+# - prove profile and token-endpoint keys isolate independent refreshes;
+# - prove a failed refresh clears the in-flight entry;
+# - prove no access or refresh token is logged or persisted outside the existing
+#   credential store.
