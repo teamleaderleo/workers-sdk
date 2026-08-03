@@ -1,0 +1,94 @@
+diff --git a/packages/workers-auth/src/core/factory.ts b/packages/workers-auth/src/core/factory.ts
+--- a/packages/workers-auth/src/core/factory.ts
++++ b/packages/workers-auth/src/core/factory.ts
+@@
+ 	createConfigCache,
+ 	fetchInternalBase,
++	getCloudflareApiBaseUrl,
+ 	getCloudflareComplianceRegion,
+@@
+ 	function getAccountFromCache(): Account | undefined {
+@@
+ 	}
++
++	let validatedCachedAccount:
++		| { accountId: string; authorityKey: string }
++		| undefined;
++
++	function getAccountAuthorityKey(
++		config: RequireAuthConfig,
++		credentials: ApiCredentials
++	): string {
++		// Process-local only. Never persist or log this value.
++		return JSON.stringify({
++			profile: getActiveProfile(),
++			apiBaseUrl: getCloudflareApiBaseUrl(config),
++			credentials,
++		});
++	}
+@@
+-	function getActiveAccountId(config: {
++	function getExplicitAccountId(config: {
+ 		account_id?: string;
+ 	}): string | undefined {
+@@
+-		return getAccountFromCache()?.id;
+ 	}
++
++	function getActiveAccountId(config: {
++		account_id?: string;
++	}): string | undefined {
++		return getExplicitAccountId(config) ?? getAccountFromCache()?.id;
++	}
+@@
+-		const activeAccountId = getActiveAccountId(config);
+-		if (activeAccountId) {
+-			return activeAccountId;
++		const explicitAccountId = getExplicitAccountId(config);
++		if (explicitAccountId) {
++			return explicitAccountId;
+ 		}
+ 
++		const cachedAccount = getAccountFromCache();
++		const currentCredentials = getAPIToken();
++		if (cachedAccount && currentCredentials) {
++			const authorityKey = getAccountAuthorityKey(config, currentCredentials);
++			if (
++				validatedCachedAccount?.accountId === cachedAccount.id &&
++				validatedCachedAccount.authorityKey === authorityKey
++			) {
++				return cachedAccount.id;
++			}
++		}
++
+ 		const accounts = await fetchAllAccounts(config);
++		const authorityKey = getAccountAuthorityKey(config, requireApiToken());
++		if (cachedAccount) {
++			const accessibleCachedAccount = accounts.find(
++				(account) => account.id === cachedAccount.id
++			);
++			if (accessibleCachedAccount) {
++				validatedCachedAccount = {
++					accountId: cachedAccount.id,
++					authorityKey,
++				};
++				return cachedAccount.id;
++			}
++		}
+ 		if (accounts.length === 1) {
+ 			saveAccountToCache({ id: accounts[0].id, name: accounts[0].name });
++			validatedCachedAccount = {
++				accountId: accounts[0].id,
++				authorityKey,
++			};
+ 			return accounts[0].id;
+@@
+ 			saveAccountToCache({ id: account.id, name: account.name });
++			validatedCachedAccount = { accountId: accountID, authorityKey };
+ 			return accountID;
+
+# Required follow-up before promotion:
+# - capture one credential object for both /accounts and /memberships requests;
+# - cover global-key/email, OAuth-to-env, profile, compliance/API-base changes;
+# - prove explicit config/env account IDs retain precedence;
+# - prove no credential-derived value is persisted or logged.
