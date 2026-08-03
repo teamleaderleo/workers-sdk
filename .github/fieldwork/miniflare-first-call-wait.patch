@@ -1,7 +1,7 @@
 diff --git a/packages/miniflare/src/index.ts b/packages/miniflare/src/index.ts
 --- a/packages/miniflare/src/index.ts
 +++ b/packages/miniflare/src/index.ts
-@@ -3348,9 +3348,26 @@ export class Miniflare {
+@@ -3348,9 +3348,24 @@ export class Miniflare {
  			void runtimeDisposePromise.catch(() => {});
  
  			// Cleanup as much as possible even if `#init()` threw.
@@ -32,7 +32,7 @@ diff --git a/packages/miniflare/src/index.ts b/packages/miniflare/src/index.ts
 diff --git a/packages/miniflare/test/teardown-lifecycle.spec.ts b/packages/miniflare/test/teardown-lifecycle.spec.ts
 --- a/packages/miniflare/test/teardown-lifecycle.spec.ts
 +++ b/packages/miniflare/test/teardown-lifecycle.spec.ts
-@@ -42,22 +42,52 @@ afterEach(() => {
+@@ -42,24 +42,49 @@ afterEach(() => {
  	vi.restoreAllMocks();
  });
  
@@ -75,7 +75,7 @@ diff --git a/packages/miniflare/test/teardown-lifecycle.spec.ts b/packages/minif
 +		.catch(() => {});
 +	await new Promise((resolve) => setTimeout(resolve, 50));
 +	expect(firstDisposeSettled).toBe(false);
-+
+ 
 +	if (killedWorkerd !== undefined) {
 +		originalKill.call(killedWorkerd, "SIGKILL");
 +		await waitForChildExit(killedWorkerd);
