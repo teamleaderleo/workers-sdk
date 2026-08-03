@@ -1,11 +1,11 @@
-import { runInTmpDir } from "@cloudflare/workers-utils/test-helpers";
+import { runInTempDir } from "@cloudflare/workers-utils/test-helpers";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, it, vi } from "vitest";
 import { getAccountFromCache, getOrSelectAccountId } from "../user";
 import { createFetchResult, msw } from "./helpers/msw";
 
 describe("account cache credential authority", () => {
-	runInTmpDir();
+	runInTempDir();
 
 	beforeEach(() => {
 		vi.stubEnv("CLOUDFLARE_API_TOKEN", "token-A");
