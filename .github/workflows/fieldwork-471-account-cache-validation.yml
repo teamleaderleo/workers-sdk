@@ -1,0 +1,268 @@
+name: Fieldwork 471 account cache validation
+
+on:
+  push:
+    branches:
+      - fieldwork/471-account-cache-validation-exec
+
+permissions:
+  contents: write
+
+jobs:
+  materialize-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fieldwork/471-account-cache-validation
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Apply bounded repair
+        shell: python
+        run: |
+          from pathlib import Path
+
+          factory = Path("packages/workers-auth/src/core/factory.ts")
+          text = factory.read_text()
+          text = text.replace(
+              "\tfetchInternalBase,\n\tgetCloudflareComplianceRegion,",
+              "\tfetchInternalBase,\n\tgetCloudflareApiBaseUrl,\n\tgetCloudflareComplianceRegion,",
+          )
+
+          cache_anchor = '''\tfunction getAccountFromCache(): Account | undefined {
+\t\treturn configCache.getConfigCache<{ account: Account }>(
+\t\t\tgetAccountCacheFileName()
+\t\t).account;
+\t}
+'''
+          cache_extra = cache_anchor + '''
+\tlet validatedCachedAccount:
+\t\t| { accountId: string; authorityKey: string }
+\t\t| undefined;
+
+\tfunction getAccountAuthorityKey(
+\t\tconfig: RequireAuthConfig,
+\t\tcredentials: ApiCredentials
+\t): string {
+\t\t// This value is process-local only. It is never persisted or logged.
+\t\treturn JSON.stringify({
+\t\t\tprofile: getActiveProfile(),
+\t\t\tapiBaseUrl: getCloudflareApiBaseUrl(config),
+\t\t\tcredentials,
+\t\t});
+\t}
+'''
+          if cache_anchor not in text:
+              raise SystemExit("cache anchor not found")
+          text = text.replace(cache_anchor, cache_extra, 1)
+
+          old_active = '''\tfunction getActiveAccountId(config: {
+\t\taccount_id?: string;
+\t}): string | undefined {
+\t\t// When operating as a temporary preview account, its id is the whole
+\t\t// identity and takes precedence over config/env/cache.
+\t\tconst temporaryAccount = oauthFlow.getActiveTemporaryAccount();
+\t\tif (temporaryAccount) {
+\t\t\treturn temporaryAccount.account.id;
+\t\t}
+
+\t\tif (config.account_id) {
+\t\t\treturn validateAccountId(
+\t\t\t\tconfig.account_id,
+\t\t\t\t`set as \\`account_id\\` in your ${descriptor.getConfigFileLabel()} file`
+\t\t\t);
+\t\t}
+\t\tconst envAccountId = getAccountIdFromEnv();
+\t\tif (envAccountId) {
+\t\t\treturn envAccountId;
+\t\t}
+\t\treturn getAccountFromCache()?.id;
+\t}
+'''
+          new_active = '''\tfunction getExplicitAccountId(config: {
+\t\taccount_id?: string;
+\t}): string | undefined {
+\t\t// When operating as a temporary preview account, its id is the whole
+\t\t// identity and takes precedence over config/env/cache.
+\t\tconst temporaryAccount = oauthFlow.getActiveTemporaryAccount();
+\t\tif (temporaryAccount) {
+\t\t\treturn temporaryAccount.account.id;
+\t\t}
+
+\t\tif (config.account_id) {
+\t\t\treturn validateAccountId(
+\t\t\t\tconfig.account_id,
+\t\t\t\t`set as \\`account_id\\` in your ${descriptor.getConfigFileLabel()} file`
+\t\t\t);
+\t\t}
+\t\tconst envAccountId = getAccountIdFromEnv();
+\t\tif (envAccountId) {
+\t\t\treturn envAccountId;
+\t\t}
+\t}
+
+\tfunction getActiveAccountId(config: {
+\t\taccount_id?: string;
+\t}): string | undefined {
+\t\treturn getExplicitAccountId(config) ?? getAccountFromCache()?.id;
+\t}
+'''
+          if old_active not in text:
+              raise SystemExit("active account block not found")
+          text = text.replace(old_active, new_active, 1)
+
+          old_start = '''\t\tconst activeAccountId = getActiveAccountId(config);
+\t\tif (activeAccountId) {
+\t\t\treturn activeAccountId;
+\t\t}
+
+\t\tconst accounts = await fetchAllAccounts(config);
+'''
+          new_start = '''\t\tconst explicitAccountId = getExplicitAccountId(config);
+\t\tif (explicitAccountId) {
+\t\t\treturn explicitAccountId;
+\t\t}
+
+\t\tconst cachedAccount = getAccountFromCache();
+\t\tconst currentCredentials = getAPIToken();
+\t\tif (cachedAccount && currentCredentials) {
+\t\t\tconst authorityKey = getAccountAuthorityKey(config, currentCredentials);
+\t\t\tif (
+\t\t\t\tvalidatedCachedAccount?.accountId === cachedAccount.id &&
+\t\t\t\tvalidatedCachedAccount.authorityKey === authorityKey
+\t\t\t) {
+\t\t\t\treturn cachedAccount.id;
+\t\t\t}
+\t\t}
+
+\t\tconst accounts = await fetchAllAccounts(config);
+\t\tconst authorityKey = getAccountAuthorityKey(config, requireApiToken());
+\t\tif (cachedAccount) {
+\t\t\tconst accessibleCachedAccount = accounts.find(
+\t\t\t\t(account) => account.id === cachedAccount.id
+\t\t\t);
+\t\t\tif (accessibleCachedAccount) {
+\t\t\t\tvalidatedCachedAccount = {
+\t\t\t\t\taccountId: cachedAccount.id,
+\t\t\t\t\tauthorityKey,
+\t\t\t\t};
+\t\t\t\treturn cachedAccount.id;
+\t\t\t}
+\t\t}
+'''
+          if old_start not in text:
+              raise SystemExit("selection start not found")
+          text = text.replace(old_start, new_start, 1)
+
+          old_single = '''\t\tif (accounts.length === 1) {
+\t\t\tsaveAccountToCache({ id: accounts[0].id, name: accounts[0].name });
+\t\t\treturn accounts[0].id;
+\t\t}
+'''
+          new_single = '''\t\tif (accounts.length === 1) {
+\t\t\tsaveAccountToCache({ id: accounts[0].id, name: accounts[0].name });
+\t\t\tvalidatedCachedAccount = {
+\t\t\t\taccountId: accounts[0].id,
+\t\t\t\tauthorityKey,
+\t\t\t};
+\t\t\treturn accounts[0].id;
+\t\t}
+'''
+          if old_single not in text:
+              raise SystemExit("single account block not found")
+          text = text.replace(old_single, new_single, 1)
+
+          old_selected = '''\t\t\tsaveAccountToCache({ id: account.id, name: account.name });
+\t\t\treturn accountID;
+'''
+          new_selected = '''\t\t\tsaveAccountToCache({ id: account.id, name: account.name });
+\t\t\tvalidatedCachedAccount = { accountId: accountID, authorityKey };
+\t\t\treturn accountID;
+'''
+          if old_selected not in text:
+              raise SystemExit("selected account block not found")
+          factory.write_text(text.replace(old_selected, new_selected, 1))
+
+          test = Path("packages/wrangler/src/__tests__/account-cache-credential-authority.test.ts")
+          test.write_text('''import { runInTempDir } from "@cloudflare/workers-utils/test-helpers";
+import { http, HttpResponse } from "msw";
+import { beforeEach, describe, it, vi } from "vitest";
+import { getAccountFromCache, getOrSelectAccountId } from "../user";
+import { createFetchResult, msw } from "./helpers/msw";
+
+describe("account cache credential authority", () => {
+\trunInTempDir();
+
+\tbeforeEach(() => {
+\t\tvi.stubEnv("CLOUDFLARE_API_TOKEN", "token-A");
+\t});
+
+\tit("revalidates a cached account when environment credentials change", async ({
+\t\texpect,
+\t}) => {
+\t\tlet membershipRequests = 0;
+\t\tconst accountForRequest = (request: Request) =>
+\t\t\trequest.headers.get("Authorization") === "Bearer token-B"
+\t\t\t\t? { id: "account-B", name: "Account B" }
+\t\t\t\t: { id: "account-A", name: "Account A" };
+
+\t\tmsw.use(
+\t\t\thttp.get("*/accounts", ({ request }) =>
+\t\t\t\tHttpResponse.json(createFetchResult([accountForRequest(request)]))
+\t\t\t),
+\t\t\thttp.get("*/memberships", ({ request }) => {
+\t\t\t\tmembershipRequests += 1;
+\t\t\t\tconst account = accountForRequest(request);
+\t\t\t\treturn HttpResponse.json(
+\t\t\t\t\tcreateFetchResult([{ id: `membership-${account.id}`, account }])
+\t\t\t\t);
+\t\t\t})
+\t\t);
+
+\t\texpect(await getOrSelectAccountId({})).toBe("account-A");
+\t\texpect(getAccountFromCache()).toEqual({
+\t\t\tid: "account-A",
+\t\t\tname: "Account A",
+\t\t});
+
+\t\tvi.stubEnv("CLOUDFLARE_API_TOKEN", "token-B");
+
+\t\texpect(await getOrSelectAccountId({})).toBe("account-B");
+\t\texpect(getAccountFromCache()).toEqual({
+\t\t\tid: "account-B",
+\t\t\tname: "Account B",
+\t\t});
+\t\texpect(membershipRequests).toBe(2);
+
+\t\texpect(await getOrSelectAccountId({})).toBe("account-B");
+\t\texpect(membershipRequests).toBe(2);
+\t});
+});
+''')
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format changed files
+        run: pnpm exec oxfmt packages/workers-auth/src/core/factory.ts packages/wrangler/src/__tests__/account-cache-credential-authority.test.ts
+
+      - name: Commit source candidate
+        run: |
+          git config user.name "fieldwork-bot"
+          git config user.email "fieldwork-bot@users.noreply.github.com"
+          git add packages/workers-auth/src/core/factory.ts packages/wrangler/src/__tests__/account-cache-credential-authority.test.ts
+          git commit -m "fix(workers-auth): revalidate cached account authority"
+          git push origin HEAD:fieldwork/471-account-cache-validation
+
+      - name: Focused Wrangler regression
+        run: pnpm -w test:ci -F wrangler -- account-cache-credential-authority.test.ts
+
+      - name: Workers auth type check
+        run: pnpm --filter @cloudflare/workers-auth check:type
