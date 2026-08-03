@@ -1,0 +1,93 @@
+diff --git a/packages/miniflare/src/index.ts b/packages/miniflare/src/index.ts
+--- a/packages/miniflare/src/index.ts
++++ b/packages/miniflare/src/index.ts
+@@ -3348,9 +3348,26 @@ export class Miniflare {
+ 			void runtimeDisposePromise.catch(() => {});
+ 
+ 			// Cleanup as much as possible even if `#init()` threw.
+-			await this.#closeBrowserProcesses();
+-			await this.#proxyClient?.dispose();
+-			await runtimeDisposePromise;
++			let earlyCleanupFailed = false;
++			let earlyCleanupError: unknown;
++			try {
++				await this.#closeBrowserProcesses();
++				await this.#proxyClient?.dispose();
++			} catch (error) {
++				earlyCleanupFailed = true;
++				earlyCleanupError = error;
++			}
++
++			try {
++				await runtimeDisposePromise;
++			} catch (error) {
++				if (!earlyCleanupFailed) throw error;
++			}
++			if (earlyCleanupFailed) {
++				throw earlyCleanupError;
++			}
+ 			// Close the undici Pool used for dispatching fetch requests to the
+ 			// runtime. This must happen after the runtime is disposed, so that
+ 			// in-flight connections are broken and close immediately. Without this,
+diff --git a/packages/miniflare/test/teardown-lifecycle.spec.ts b/packages/miniflare/test/teardown-lifecycle.spec.ts
+--- a/packages/miniflare/test/teardown-lifecycle.spec.ts
++++ b/packages/miniflare/test/teardown-lifecycle.spec.ts
+@@ -42,22 +42,52 @@ afterEach(() => {
+ 	vi.restoreAllMocks();
+ });
+ 
+-test("Miniflare: dispose kills workerd after proxy cleanup rejects", async ({
+-	expect,
+-}) => {
++test("Miniflare: first dispose waits for workerd exit after proxy cleanup rejects", async ({ expect }) => {
+ 	const mf = await createReadyMiniflare();
+ 	const proxyDispose = vi
+ 		.spyOn(ProxyClient.prototype, "dispose")
+ 		.mockRejectedValueOnce(new Error("injected proxy cleanup failure"));
+-	const kill = vi.spyOn(childProcess.ChildProcess.prototype, "kill");
++	const originalKill = childProcess.ChildProcess.prototype.kill;
++	let killedWorkerd: childProcess.ChildProcess | undefined;
++	const kill = vi
++		.spyOn(childProcess.ChildProcess.prototype, "kill")
++		.mockImplementation(function (
++			this: childProcess.ChildProcess,
++			signal?: number | NodeJS.Signals
++		) {
++			if (
++				signal === "SIGKILL" &&
++				path.basename(this.spawnfile).toLowerCase().startsWith("workerd")
++			) {
++				killedWorkerd = this;
++				return true;
++			}
++			return originalKill.call(this, signal);
++		});
+ 
+-	await expect(mf.dispose()).rejects.toThrow("injected proxy cleanup failure");
+-	const killedWorkerd = findKilledWorkerd(kill);
++	const firstDispose = mf.dispose();
++	await vi.waitFor(() => expect(killedWorkerd).toBeDefined());
++	let firstDisposeSettled = false;
++	void firstDispose
++		.finally(() => {
++			firstDisposeSettled = true;
++		})
++		.catch(() => {});
++	await new Promise((resolve) => setTimeout(resolve, 50));
++	expect(firstDisposeSettled).toBe(false);
++
++	if (killedWorkerd !== undefined) {
++		originalKill.call(killedWorkerd, "SIGKILL");
++		await waitForChildExit(killedWorkerd);
++	}
++	await expect(firstDispose).rejects.toThrow("injected proxy cleanup failure");
+ 
++	kill.mockRestore();
+ 	proxyDispose.mockRestore();
+ 	await mf.dispose().catch(() => {});
+-
+-	expect(killedWorkerd).toBeDefined();
+-	if (killedWorkerd !== undefined) await waitForChildExit(killedWorkerd);
+ });
+ 
+ test("Miniflare: dispose requests workerd termination while proxy cleanup is pending", async ({
