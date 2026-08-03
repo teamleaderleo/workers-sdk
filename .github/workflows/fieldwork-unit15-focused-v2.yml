@@ -1,0 +1,32 @@
+name: Fieldwork Unit 15 Focused Execution
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fieldwork-unit15-focused-v2.yml"
+      - "packages/miniflare/**"
+      - "pnpm-lock.yaml"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  miniflare-teardown:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run focused teardown lifecycle controls
+        run: pnpm --filter miniflare test -- teardown-lifecycle.spec.ts
+      - name: Run Miniflare type check
+        run: pnpm --filter miniflare check:type
