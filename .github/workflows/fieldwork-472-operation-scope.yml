@@ -1,0 +1,145 @@
+name: Fieldwork 472 operation scope
+
+on:
+  push:
+    branches:
+      - fieldwork/472-deploy-context-operation-scope-exec
+
+permissions:
+  contents: write
+
+jobs:
+  materialize-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fieldwork/472-deploy-context-operation-scope
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Apply bounded repair
+        shell: python
+        run: |
+          from pathlib import Path
+
+          context = Path("packages/deploy-helpers/src/shared/context.ts")
+          text = context.read_text()
+          text = text.replace(
+              "export function initDeployHelpersContext(ctx: DeployHelpersContext): void {\n\tfallbackContext = ctx;\n\tcontextStorage.enterWith(ctx);\n}\n",
+              "export function initDeployHelpersContext(ctx: DeployHelpersContext): void {\n\tfallbackContext = ctx;\n}\n\n/** Run one deploy-helper operation with an immutable owner context. */\nexport function runWithDeployHelpersContext<T>(\n\tctx: DeployHelpersContext,\n\tcallback: () => T\n): T {\n\treturn contextStorage.run(ctx, callback);\n}\n",
+          )
+          if "contextStorage.enterWith" in text:
+              raise SystemExit("enterWith replacement did not apply")
+          context.write_text(text)
+
+          index = Path("packages/deploy-helpers/src/index.ts")
+          text = index.read_text().replace(
+              'export { initDeployHelpersContext } from "./shared/context";',
+              'export {\n\tinitDeployHelpersContext,\n\trunWithDeployHelpersContext,\n} from "./shared/context";',
+          )
+          index.write_text(text)
+
+          register = Path("packages/wrangler/src/core/register-yargs-command.ts")
+          text = register.read_text().replace(
+              'import { initDeployHelpersContext } from "@cloudflare/deploy-helpers";',
+              'import { runWithDeployHelpersContext } from "@cloudflare/deploy-helpers";',
+          )
+          old = '''\t\t\t\t\tinitDeployHelpersContext({
+\t\t\t\t\t\tlogger,
+\t\t\t\t\t\tfetchResult,
+\t\t\t\t\t\tfetchListResult,
+\t\t\t\t\t\tfetchPagedListResult,
+\t\t\t\t\t\tfetchKVGetValue,
+\t\t\t\t\t\tconfirm,
+\t\t\t\t\t\tprompt,
+\t\t\t\t\t\tselect,
+\t\t\t\t\t});
+
+\t\t\t\t\tconst result = await def.handler(args, {
+\t\t\t\t\t\tsdk: createCloudflareClient(config),
+\t\t\t\t\t\tconfig,
+\t\t\t\t\t\terrors: { UserError, FatalError },
+\t\t\t\t\t\tlogger,
+\t\t\t\t\t\tfetchResult,
+\t\t\t\t\t\tfetchListResult,
+\t\t\t\t\t\tfetchPagedListResult,
+\t\t\t\t\t\tfetchKVGetValue,
+\t\t\t\t\t\tprompt,
+\t\t\t\t\t\tconfirm,
+\t\t\t\t\t\tisNonInteractiveOrCI,
+\t\t\t\t\t});'''
+          new = '''\t\t\t\t\tconst result = await runWithDeployHelpersContext(
+\t\t\t\t\t\t{
+\t\t\t\t\t\t\tlogger,
+\t\t\t\t\t\t\tfetchResult,
+\t\t\t\t\t\t\tfetchListResult,
+\t\t\t\t\t\t\tfetchPagedListResult,
+\t\t\t\t\t\t\tfetchKVGetValue,
+\t\t\t\t\t\t\tconfirm,
+\t\t\t\t\t\t\tprompt,
+\t\t\t\t\t\t\tselect,
+\t\t\t\t\t\t},
+\t\t\t\t\t\t() =>
+\t\t\t\t\t\t\tdef.handler(args, {
+\t\t\t\t\t\t\t\tsdk: createCloudflareClient(config),
+\t\t\t\t\t\t\t\tconfig,
+\t\t\t\t\t\t\t\terrors: { UserError, FatalError },
+\t\t\t\t\t\t\t\tlogger,
+\t\t\t\t\t\t\t\tfetchResult,
+\t\t\t\t\t\t\t\tfetchListResult,
+\t\t\t\t\t\t\t\tfetchPagedListResult,
+\t\t\t\t\t\t\t\tfetchKVGetValue,
+\t\t\t\t\t\t\t\tprompt,
+\t\t\t\t\t\t\t\tconfirm,
+\t\t\t\t\t\t\t\tisNonInteractiveOrCI,
+\t\t\t\t\t\t\t})
+\t\t\t\t\t);'''
+          if old not in text:
+              raise SystemExit("register-yargs operation block not found")
+          register.write_text(text.replace(old, new))
+
+          test = Path("packages/deploy-helpers/tests/context-operation-candidate.test.ts")
+          text = test.read_text()
+          text = text.replace(
+              'import { initDeployHelpersContext } from "@cloudflare/deploy-helpers";',
+              'import {\n\tinitDeployHelpersContext,\n\trunWithDeployHelpersContext,\n} from "@cloudflare/deploy-helpers";',
+          )
+          text = text.replace(
+              'const pendingOperation = getWorkersDevSubdomain({}, "account-A");',
+              'const pendingOperation = runWithDeployHelpersContext(contextA, () =>\n\t\t\tgetWorkersDevSubdomain({}, "account-A")\n\t\t);',
+          )
+          # Rewrite the first two inline contexts as named values so the operation wrapper can own A.
+          first = text.find("\t\t\tinitDeployHelpersContext({")
+          if first == -1:
+              raise SystemExit("first test context not found")
+          text = text[:first] + text[first:].replace("\t\t\tinitDeployHelpersContext({", "\t\t\tconst contextA = {", 1)
+          marker = "\n\t\t\t});\n\n\t\t\tconst pendingOperation"
+          text = text.replace(marker, "\n\t\t\t} as const;\n\n\t\t\tconst pendingOperation", 1)
+          test.write_text(text)
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format changed files
+        run: pnpm exec oxfmt packages/deploy-helpers/src/shared/context.ts packages/deploy-helpers/src/index.ts packages/deploy-helpers/tests/context-operation-candidate.test.ts packages/wrangler/src/core/register-yargs-command.ts
+
+      - name: Commit source candidate
+        run: |
+          git config user.name "fieldwork-bot"
+          git config user.email "fieldwork-bot@users.noreply.github.com"
+          git add packages/deploy-helpers/src/shared/context.ts packages/deploy-helpers/src/index.ts packages/deploy-helpers/tests/context-operation-candidate.test.ts packages/wrangler/src/core/register-yargs-command.ts
+          git commit -m "fix(deploy-helpers): scope context to one operation"
+          git push origin HEAD:fieldwork/472-deploy-context-operation-scope
+
+      - name: Focused deploy-helper tests
+        run: pnpm -w test:ci -F @cloudflare/deploy-helpers -- context-operation-candidate.test.ts
+
+      - name: Deploy-helper type check
+        run: pnpm --filter @cloudflare/deploy-helpers check:type
