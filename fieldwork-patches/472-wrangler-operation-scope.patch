@@ -1,0 +1,62 @@
+diff --git a/packages/wrangler/src/core/register-yargs-command.ts b/packages/wrangler/src/core/register-yargs-command.ts
+--- a/packages/wrangler/src/core/register-yargs-command.ts
++++ b/packages/wrangler/src/core/register-yargs-command.ts
+@@
+-import { initDeployHelpersContext } from "@cloudflare/deploy-helpers";
++import { runWithDeployHelpersContext } from "@cloudflare/deploy-helpers";
+@@
+-					initDeployHelpersContext({
+-						logger,
+-						fetchResult,
+-						fetchListResult,
+-						fetchPagedListResult,
+-						fetchKVGetValue,
+-						confirm,
+-						prompt,
+-						select,
+-					});
+-
+-					const result = await def.handler(args, {
+-						sdk: createCloudflareClient(config),
+-						config,
+-						errors: { UserError, FatalError },
+-						logger,
+-						fetchResult,
+-						fetchListResult,
+-						fetchPagedListResult,
+-						fetchKVGetValue,
+-						prompt,
+-						confirm,
+-						isNonInteractiveOrCI,
+-					});
++					const result = await runWithDeployHelpersContext(
++						{
++							logger,
++							fetchResult,
++							fetchListResult,
++							fetchPagedListResult,
++							fetchKVGetValue,
++							confirm,
++							prompt,
++							select,
++						},
++						() =>
++							def.handler(args, {
++								sdk: createCloudflareClient(config),
++								config,
++								errors: { UserError, FatalError },
++								logger,
++								fetchResult,
++								fetchListResult,
++								fetchPagedListResult,
++								fetchKVGetValue,
++								prompt,
++								confirm,
++								isNonInteractiveOrCI,
++							})
++					);
+
+# Required follow-up before promotion:
+# - apply this call-site patch to the source branch;
+# - run the focused deploy-helper regression and Wrangler command tests;
+# - enumerate detached callbacks that require explicit binding or captured context.
