@@ -1,5 +1,8 @@
 export * from "./shared/types";
-export { initDeployHelpersContext } from "./shared/context";
+export {
+	initDeployHelpersContext,
+	runWithDeployHelpersContext,
+} from "./shared/context";
 export { default as deploy } from "./deploy/deploy";
 export type { DeployCallbacks } from "./deploy/deploy";
 export { default as versionsUpload } from "./deploy/versions-upload";

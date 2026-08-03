@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { DeployHelpersContext } from "./types";
 import type {
 	FetchKVGetValueFetcher,
 	FetchListResultFetcher,
@@ -7,6 +6,7 @@ import type {
 	FetchResultFetcher,
 	Logger,
 } from "@cloudflare/workers-utils";
+import type { DeployHelpersContext } from "./types";
 
 const contextStorage = new AsyncLocalStorage<DeployHelpersContext>();
 let fallbackContext: DeployHelpersContext | undefined;
@@ -41,13 +41,7 @@ function forwardFunction<Key extends FunctionContextKey>(
 	}) as DeployHelpersContext[Key];
 }
 
-/**
- * Forwarding adapters for the active deploy-helper operation.
- *
- * `initDeployHelpersContext()` installs a context in the current async chain.
- * Operations that start before another initialization retain their own owner,
- * while sequential callers keep the existing initializer-based API.
- */
+/** Forwarding adapters for the active deploy-helper operation. */
 export const logger: Logger = new Proxy({} as Logger, {
 	get(_target, property) {
 		const currentLogger = getDeployHelpersContext().logger;
@@ -68,14 +62,15 @@ export const confirm: DeployHelpersContext["confirm"] =
 export const prompt: DeployHelpersContext["prompt"] = forwardFunction("prompt");
 export const select: DeployHelpersContext["select"] = forwardFunction("select");
 
-/**
- * Set the deploy-helper context for the current async operation.
- *
- * The fallback preserves existing sequential and module-initialization callers.
- * AsyncLocalStorage keeps already-started overlapping operations bound to the
- * context active when their asynchronous work was created.
- */
+/** Set the fallback used by sequential and module-initialization consumers. */
 export function initDeployHelpersContext(ctx: DeployHelpersContext): void {
 	fallbackContext = ctx;
-	contextStorage.enterWith(ctx);
+}
+
+/** Run one deploy-helper operation with an immutable owner context. */
+export function runWithDeployHelpersContext<T>(
+	ctx: DeployHelpersContext,
+	callback: () => T
+): T {
+	return contextStorage.run(ctx, callback);
 }
