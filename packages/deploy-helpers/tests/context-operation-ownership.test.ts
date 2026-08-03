@@ -1,9 +1,8 @@
-import { initDeployHelpersContext } from "@cloudflare/deploy-helpers";
 import {
-	confirm,
-	fetchResult,
-	logger,
-} from "@cloudflare/deploy-helpers/context";
+	getWorkersDevSubdomain,
+	initDeployHelpersContext,
+} from "@cloudflare/deploy-helpers";
+import { confirm, fetchResult, logger } from "@cloudflare/deploy-helpers/context";
 import { describe, it } from "vitest";
 
 describe("deploy helper operation context", () => {
@@ -65,6 +64,72 @@ describe("deploy helper operation context", () => {
 			fetchResult: fetchB,
 			confirm: confirmB,
 		});
+	});
+
+	it("routes a helper's post-await work through the later context", async ({
+		expect,
+	}) => {
+		const events: string[] = [];
+		let rejectFetchA: ((reason?: unknown) => void) | undefined;
+		const fetchA = () => {
+			events.push("fetch-A");
+			return new Promise((_, reject) => {
+				rejectFetchA = reject;
+			});
+		};
+
+		initDeployHelpersContext({
+			logger: {
+				debug: () => {},
+				error: () => {},
+				info: () => {},
+				log: () => {},
+				warn: () => events.push("warn-A"),
+			} as never,
+			fetchResult: fetchA as never,
+			fetchListResult: (() => {}) as never,
+			fetchPagedListResult: (() => {}) as never,
+			fetchKVGetValue: (() => {}) as never,
+			confirm: (async () => {
+				events.push("confirm-A");
+				return false;
+			}) as never,
+			prompt: (() => {}) as never,
+			select: (() => {}) as never,
+		});
+
+		const pendingOperation = getWorkersDevSubdomain({}, "account-A");
+
+		initDeployHelpersContext({
+			logger: {
+				debug: () => {},
+				error: () => {},
+				info: () => {},
+				log: () => {},
+				warn: () => events.push("warn-B"),
+			} as never,
+			fetchResult: (() => {
+				throw new Error("fetch-B should not run");
+			}) as never,
+			fetchListResult: (() => {}) as never,
+			fetchPagedListResult: (() => {}) as never,
+			fetchKVGetValue: (() => {}) as never,
+			confirm: (async () => {
+				events.push("confirm-B");
+				return false;
+			}) as never,
+			prompt: (() => {}) as never,
+			select: (() => {}) as never,
+		});
+
+		rejectFetchA?.(
+			Object.assign(new Error("Subdomain not found"), { code: 10007 })
+		);
+
+		await expect(pendingOperation).rejects.toThrow(
+			"Workflows require your account"
+		);
+		expect(events).toEqual(["fetch-A", "warn-B", "confirm-B"]);
 	});
 
 	it("keeps ownership when the operation captures an explicit context", async ({
