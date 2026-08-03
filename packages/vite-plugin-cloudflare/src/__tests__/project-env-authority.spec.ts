@@ -7,15 +7,22 @@ import { resolvePluginConfig } from "../plugin-config";
 
 const TOKEN_ENV = "CLOUDFLARE_API_TOKEN";
 const viteEnv = { mode: "development", command: "serve" as const };
+let projectCounter = 0;
 
-function createProject(token?: string): string {
+function createProject(
+	token?: string,
+	options: { invalidWorkerName?: boolean } = {}
+): string {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "vite-env-authority-"));
+	const workerName = options.invalidWorkerName
+		? "INVALID_WORKER_NAME"
+		: `vite-env-authority-${++projectCounter}`;
 	fs.mkdirSync(path.join(root, "src"), { recursive: true });
 	fs.writeFileSync(path.join(root, "src/index.ts"), "export default {}\n");
 	fs.writeFileSync(
 		path.join(root, "wrangler.jsonc"),
 		JSON.stringify({
-			name: path.basename(root),
+			name: workerName,
 			main: "./src/index.ts",
 			compatibility_date: "2025-01-01",
 		})
@@ -71,5 +78,32 @@ describe("resolvePluginConfig project environment authority", () => {
 		await resolvePluginConfig({}, { root: projectB }, viteEnv);
 
 		expect(process.env[TOKEN_ENV]).toBe("fieldwork-project-a");
+	});
+
+	test("an existing host token remains authoritative over project dotenv values", async ({
+		expect,
+	}) => {
+		process.env[TOKEN_ENV] = "fieldwork-host-token";
+		const project = createProject("fieldwork-project-token");
+		roots.push(project);
+
+		await resolvePluginConfig({}, { root: project }, viteEnv);
+
+		expect(process.env[TOKEN_ENV]).toBe("fieldwork-host-token");
+	});
+
+	test("a configuration failure leaves the project token in the host environment", async ({
+		expect,
+	}) => {
+		delete process.env[TOKEN_ENV];
+		const project = createProject("fieldwork-failed-project", {
+			invalidWorkerName: true,
+		});
+		roots.push(project);
+
+		await expect(
+			resolvePluginConfig({}, { root: project }, viteEnv)
+		).rejects.toThrow("Expected \"name\"");
+		expect(process.env[TOKEN_ENV]).toBe("fieldwork-failed-project");
 	});
 });
