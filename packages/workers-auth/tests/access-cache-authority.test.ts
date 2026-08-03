@@ -63,6 +63,24 @@ describe("Access cache authority", () => {
 		).rejects.toThrow("no Access Service Token credentials were found");
 	});
 
+	it("uses the complete service-token pair from the current operation", async ({
+		expect,
+	}) => {
+		vi.stubEnv("CLOUDFLARE_ACCESS_CLIENT_ID", "sentinel-client-A");
+		vi.stubEnv("CLOUDFLARE_ACCESS_CLIENT_SECRET", "sentinel-secret-A");
+		await getAccessHeaders("access-protected.com", options);
+
+		vi.stubEnv("CLOUDFLARE_ACCESS_CLIENT_ID", "sentinel-client-B");
+		vi.stubEnv("CLOUDFLARE_ACCESS_CLIENT_SECRET", "sentinel-secret-B");
+
+		await expect(
+			getAccessHeaders("access-protected.com", options)
+		).resolves.toEqual({
+			"CF-Access-Client-Id": "sentinel-client-B",
+			"CF-Access-Client-Secret": "sentinel-secret-B",
+		});
+	});
+
 	it("does not replace a partial current pair with a cached complete pair", async ({
 		expect,
 	}) => {
