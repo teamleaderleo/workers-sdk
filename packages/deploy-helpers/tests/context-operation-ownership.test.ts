@@ -127,7 +127,7 @@ describe("deploy helper operation context", () => {
 		);
 
 		await expect(pendingOperation).rejects.toThrow(
-			"Workflows require your account"
+			"You can either deploy your worker"
 		);
 		expect(events).toEqual(["fetch-A", "warn-B", "confirm-B"]);
 	});
