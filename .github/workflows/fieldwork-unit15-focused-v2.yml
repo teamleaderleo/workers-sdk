@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/fieldwork-unit15-focused-v2.yml"
+      - ".github/fieldwork/miniflare-first-call-wait.patch"
       - "packages/miniflare/**"
       - "pnpm-lock.yaml"
       - "package.json"
@@ -25,6 +26,10 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Apply first-call wait candidate
+        run: |
+          git apply --check .github/fieldwork/miniflare-first-call-wait.patch
+          git apply .github/fieldwork/miniflare-first-call-wait.patch
       - name: Run focused teardown lifecycle controls
         run: pnpm --filter miniflare test -- teardown-lifecycle.spec.ts
       - name: Run Miniflare type check
