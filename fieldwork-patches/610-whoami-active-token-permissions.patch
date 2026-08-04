@@ -1,10 +1,20 @@
 diff --git a/packages/wrangler/src/user/whoami.ts b/packages/wrangler/src/user/whoami.ts
 --- a/packages/wrangler/src/user/whoami.ts
 +++ b/packages/wrangler/src/user/whoami.ts
-@@
+@@ -273,8 +273,8 @@ export async function getUserInfo(
+ 		return;
+ 	}
+ 	const authType = await getAuthType(complianceConfig, apiToken);
+ 
 -	const tokenPermissions = await getTokenPermissions();
 +	const tokenPermissions = await getTokenPermissions(authType);
-@@
+ 
+ 	return {
+ 		apiToken: "authKey" in apiToken ? apiToken.authKey : apiToken.apiToken,
+@@ -370,6 +370,11 @@ async function getAccounts(
+ 	});
+ }
+ 
 -async function getTokenPermissions(): Promise<string[] | undefined> {
 +async function getTokenPermissions(
 +	authType: AuthType
