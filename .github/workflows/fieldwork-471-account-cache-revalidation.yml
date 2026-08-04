@@ -1,0 +1,70 @@
+name: Fieldwork 471 Account Cache Revalidation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fieldwork-471-account-cache-revalidation.yml"
+      - "fieldwork-patches/471-account-cache-validation.patch"
+      - "packages/workers-auth/src/core/factory.ts"
+      - "packages/wrangler/src/__tests__/account-cache-credential-authority.test.ts"
+      - "packages/workers-auth/package.json"
+      - "packages/wrangler/package.json"
+      - "pnpm-lock.yaml"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  account-cache-revalidation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Verify exact evidence parent
+        run: test "$(git rev-parse HEAD^1)" = "dfffb0b48cc6aea50d1975a8fab0b073d42bfa67"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Require focused baseline to lose
+        run: |
+          set +e
+          pnpm --filter wrangler exec vitest run \
+            src/__tests__/account-cache-credential-authority.test.ts
+          status=$?
+          set -e
+          test "$status" -ne 0
+      - name: Apply retained candidate with zero fuzz
+        run: |
+          git apply --check --whitespace=error-all \
+            fieldwork-patches/471-account-cache-validation.patch
+          git apply --whitespace=error-all \
+            fieldwork-patches/471-account-cache-validation.patch
+      - name: Check formatting
+        run: |
+          pnpm exec oxfmt --check \
+            packages/workers-auth/src/core/factory.ts \
+            packages/wrangler/src/__tests__/account-cache-credential-authority.test.ts
+      - name: Build workers-auth
+        run: pnpm --filter @cloudflare/workers-auth build
+      - name: Typecheck workers-auth and Wrangler
+        run: |
+          pnpm --filter @cloudflare/workers-auth check:type
+          pnpm --filter wrangler check:type
+      - name: Require focused candidate to pass
+        run: |
+          pnpm --filter wrangler exec vitest run \
+            src/__tests__/account-cache-credential-authority.test.ts
+      - name: Verify exact source fence
+        run: |
+          git diff --check
+          mapfile -t changed < <(git diff --name-only | sort)
+          expected=(packages/workers-auth/src/core/factory.ts)
+          test "${changed[*]}" = "${expected[*]}"
