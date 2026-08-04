@@ -37,32 +37,46 @@ function createLogger(): OAuthFlowContext["logger"] {
 	} as unknown as OAuthFlowContext["logger"];
 }
 
+type AttemptValues = Required<
+	Pick<OAuthFlowState, "codeChallenge" | "codeVerifier" | "stateQueryParam">
+>;
+
 describe("OAuth login attempt isolation", () => {
 	beforeEach(() => {
 		getOauthToken.mockReset();
 	});
 
-	it("gives concurrent login attempts distinct PKCE and CSRF state", async ({
+	it("keeps concurrent login attempts' PKCE and CSRF state independent", async ({
 		expect,
 	}) => {
 		const stores = new Map([
 			["profile-A", createStorage()],
 			["profile-B", createStorage()],
 		]);
-		const states: OAuthFlowState[] = [];
+		const attempts: Array<{
+			state: OAuthFlowState;
+			expected: AttemptValues;
+		}> = [];
 		const { promise: gate, resolve: releaseLogins } =
 			Promise.withResolvers<void>();
 
 		getOauthToken.mockImplementation(
 			async (_options: unknown, state: OAuthFlowState) => {
-				states.push(state);
+				const attemptNumber = attempts.length + 1;
+				const expected: AttemptValues = {
+					codeChallenge: `challenge-${attemptNumber}`,
+					codeVerifier: `verifier-${attemptNumber}`,
+					stateQueryParam: `state-${attemptNumber}`,
+				};
+				Object.assign(state, expected);
+				attempts.push({ state, expected });
 				await gate;
 				return {
 					token: {
-						value: `access-${states.length}`,
+						value: `access-${attemptNumber}`,
 						expiry: "2999-01-01T00:00:00.000Z",
 					},
-					refreshToken: { value: `refresh-${states.length}` },
+					refreshToken: { value: `refresh-${attemptNumber}` },
 					scopes: ["account:read"],
 				};
 			}
@@ -100,8 +114,10 @@ describe("OAuth login attempt isolation", () => {
 			profile: "profile-B",
 		});
 
-		await vi.waitFor(() => expect(states).toHaveLength(2));
-		expect(states[0]).not.toBe(states[1]);
+		await vi.waitFor(() => expect(attempts).toHaveLength(2));
+		expect(attempts[0].state).toMatchObject(attempts[0].expected);
+		expect(attempts[1].state).toMatchObject(attempts[1].expected);
+		expect(attempts[0].state).not.toBe(attempts[1].state);
 
 		releaseLogins();
 		await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
