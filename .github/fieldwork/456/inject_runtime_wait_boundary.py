@@ -48,7 +48,10 @@ test_path = Path("packages/miniflare/test/teardown-lifecycle.spec.ts")
 test_text = test_path.read_text(encoding="utf-8")
 
 old_import = 'import { Miniflare, ProxyClient } from "miniflare";'
-new_import = 'import { Miniflare, ProxyClient, Runtime } from "miniflare";'
+new_import = (
+    'import { Miniflare, ProxyClient } from "miniflare";\n'
+    'import { Runtime } from "../src/runtime";'
+)
 if test_text.count(old_import) != 1:
     raise SystemExit(
         f"expected exactly one Miniflare import, found {test_text.count(old_import)}"
