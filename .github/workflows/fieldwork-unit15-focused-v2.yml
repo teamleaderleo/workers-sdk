@@ -1,6 +1,6 @@
 name: Fieldwork Unit 15 Focused Execution
 
-# Canonical source under test: d668e318f5e6b0c1e2cbd66ac4b46d8cddbca642
+# Canonical source under test: d3ca9ad275e0cc93f985bb7485a776cec023d4ca
 on:
   pull_request:
     paths:
@@ -23,7 +23,7 @@ jobs:
         with:
           fetch-depth: 2
       - name: Verify exact canonical source base
-        run: test "$(git rev-parse HEAD^1)" = "d668e318f5e6b0c1e2cbd66ac4b46d8cddbca642"
+        run: test "$(git rev-parse HEAD^1)" = "d3ca9ad275e0cc93f985bb7485a776cec023d4ca"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.22.1
