@@ -1,0 +1,72 @@
+name: Fieldwork 608 Refresh Singleflight Candidate
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fieldwork-608-refresh-singleflight-candidate.yml"
+      - "fieldwork-patches/608-refresh-account-discovery-singleflight.patch"
+      - "packages/workers-auth/src/flow.ts"
+      - "packages/workers-auth/src/core/factory.ts"
+      - "packages/workers-auth/tests/refresh-singleflight.test.ts"
+      - "packages/workers-auth/package.json"
+      - "pnpm-lock.yaml"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh-singleflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Verify exact evidence parent
+        run: test "$(git rev-parse HEAD^1)" = "c88461709604ffa418f27faea22544252ac9a46e"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Require focused baseline to lose
+        run: |
+          set +e
+          pnpm --filter @cloudflare/workers-auth exec vitest run \
+            tests/refresh-singleflight.test.ts
+          status=$?
+          set -e
+          test "$status" -ne 0
+      - name: Apply retained candidate with zero fuzz
+        run: |
+          git apply --check --whitespace=error-all \
+            fieldwork-patches/608-refresh-account-discovery-singleflight.patch
+          git apply --whitespace=error-all \
+            fieldwork-patches/608-refresh-account-discovery-singleflight.patch
+      - name: Check formatting
+        run: |
+          pnpm exec oxfmt --check \
+            packages/workers-auth/src/flow.ts \
+            packages/workers-auth/src/core/factory.ts \
+            packages/workers-auth/tests/refresh-singleflight.test.ts
+      - name: Build workers-auth
+        run: pnpm --filter @cloudflare/workers-auth build
+      - name: Typecheck workers-auth
+        run: pnpm --filter @cloudflare/workers-auth check:type
+      - name: Require focused candidate to pass
+        run: |
+          pnpm --filter @cloudflare/workers-auth exec vitest run \
+            tests/refresh-singleflight.test.ts
+      - name: Verify exact source fence
+        run: |
+          git diff --check
+          mapfile -t changed < <(git diff --name-only | sort)
+          expected=(
+            packages/workers-auth/src/core/factory.ts
+            packages/workers-auth/src/flow.ts
+          )
+          test "${changed[*]}" = "${expected[*]}"
