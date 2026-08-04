@@ -13,7 +13,14 @@ old_cleanup = '''\t\t\t// An earlier cleanup failure may prevent the final await
 \t\t\tawait runtimeDisposePromise;
 '''
 
-new_cleanup = '''\t\t\t// Preserve the existing first cleanup error, but do not allow it to make
+new_cleanup = '''\t\t\t// Attach a rejection handler immediately so a fast runtime failure cannot
+\t\t\t// become unhandled while independent cleanup is still pending.
+\t\t\tconst runtimeDisposeOutcome = runtimeDisposePromise.then(
+\t\t\t\t() => ({ ok: true as const }),
+\t\t\t\t(error: unknown) => ({ ok: false as const, error })
+\t\t\t);
+
+\t\t\t// Preserve the existing first cleanup error, but do not allow it to make
 \t\t\t// the first dispose call return before the owned runtime exit settles.
 \t\t\tlet independentCleanupFailed = false;
 \t\t\tlet independentCleanupError: unknown;
@@ -26,17 +33,9 @@ new_cleanup = '''\t\t\t// Preserve the existing first cleanup error, but do not 
 \t\t\t\tindependentCleanupError = error;
 \t\t\t}
 
-\t\t\tlet runtimeCleanupFailed = false;
-\t\t\tlet runtimeCleanupError: unknown;
-\t\t\ttry {
-\t\t\t\tawait runtimeDisposePromise;
-\t\t\t} catch (error) {
-\t\t\t\truntimeCleanupFailed = true;
-\t\t\t\truntimeCleanupError = error;
-\t\t\t}
-
+\t\t\tconst runtimeCleanupOutcome = await runtimeDisposeOutcome;
 \t\t\tif (independentCleanupFailed) throw independentCleanupError;
-\t\t\tif (runtimeCleanupFailed) throw runtimeCleanupError;
+\t\t\tif (!runtimeCleanupOutcome.ok) throw runtimeCleanupOutcome.error;
 '''
 
 if index_text.count(old_cleanup) != 1:
@@ -114,8 +113,11 @@ replacement_test = '''test("Miniflare: dispose waits for workerd exit before ret
 \texpect((firstDisposeError as Error).message).toContain(
 \t\t"injected proxy cleanup failure"
 \t);
+\tif (killedWorkerd === undefined) {
+\t\tthrow new Error("expected workerd to receive SIGKILL");
+\t}
 \texpect(
-\t\tkilledWorkerd?.exitCode !== null || killedWorkerd?.signalCode !== null
+\t\tkilledWorkerd.exitCode !== null || killedWorkerd.signalCode !== null
 \t).toBe(true);
 
 \truntimeDispose.mockRestore();
