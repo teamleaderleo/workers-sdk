@@ -43,6 +43,9 @@ jobs:
           test "$actual" = "$expected"
           git diff --check "$BASE_HEAD..HEAD"
           python -m py_compile .github/fieldwork/456/inject_runtime_wait_boundary.py
+          echo "EXPERIMENT_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          cp .github/fieldwork/456/inject_runtime_wait_boundary.py \
+            "$RUNNER_TEMP/inject_runtime_wait_boundary.py"
 
       - name: Set up repository Node version
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -62,8 +65,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git checkout --detach "$BASE_HEAD"
           mkdir -p receipt
-          python .github/fieldwork/456/inject_runtime_wait_boundary.py
+          python "$RUNNER_TEMP/inject_runtime_wait_boundary.py"
           pnpm exec oxfmt \
             packages/miniflare/src/index.ts \
             packages/miniflare/test/teardown-lifecycle.spec.ts
@@ -81,7 +85,7 @@ jobs:
             packages/miniflare/test/teardown-lifecycle.spec.ts \
             > receipt/proposed-source.diff
           {
-            echo "experiment_head=$(git rev-parse HEAD)"
+            echo "experiment_head=$EXPERIMENT_HEAD"
             echo "base_head=$BASE_HEAD"
             echo "public_base=$PUBLIC_BASE"
             echo "current_main=$CURRENT_MAIN"
