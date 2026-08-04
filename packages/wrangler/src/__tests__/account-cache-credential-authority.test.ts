@@ -11,7 +11,7 @@ describe("account cache credential authority", () => {
 		vi.stubEnv("CLOUDFLARE_API_TOKEN", "token-A");
 	});
 
-	it("revalidates a cached account when environment credentials change", async ({
+	it("treats the cached account as a current-authority preference", async ({
 		expect,
 	}) => {
 		let membershipRequests = 0;
@@ -38,6 +38,7 @@ describe("account cache credential authority", () => {
 			id: "account-A",
 			name: "Account A",
 		});
+		expect(membershipRequests).toBe(1);
 
 		vi.stubEnv("CLOUDFLARE_API_TOKEN", "token-B");
 
@@ -48,7 +49,9 @@ describe("account cache credential authority", () => {
 		});
 		expect(membershipRequests).toBe(2);
 
+		// With no immutable operation identity, an implicit cached account is
+		// rechecked on every call rather than being tied to credential bytes.
 		expect(await getOrSelectAccountId({})).toBe("account-B");
-		expect(membershipRequests).toBe(2);
+		expect(membershipRequests).toBe(3);
 	});
 });
