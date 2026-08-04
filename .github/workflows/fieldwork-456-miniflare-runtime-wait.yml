@@ -15,7 +15,9 @@ concurrency:
 
 env:
   BASE_HEAD: d3ca9ad275e0cc93f985bb7485a776cec023d4ca
-  SOURCE_BRANCH: repair/miniflare-runtime-wait-source
+  PUBLIC_BASE: 95d9b12f2c707f254b66b446e0bd9fd6b8b7d96d
+  CURRENT_MAIN: 42c4227798c21cfde8dbfb087be1bb9078dab185
+  SOURCE_BRANCH: repair/miniflare-runtime-wait-current-main
 
 jobs:
   focused:
@@ -81,6 +83,8 @@ jobs:
           {
             echo "experiment_head=$(git rev-parse HEAD)"
             echo "base_head=$BASE_HEAD"
+            echo "public_base=$PUBLIC_BASE"
+            echo "current_main=$CURRENT_MAIN"
             echo "node=$(node --version)"
             echo "pnpm=$(pnpm --version)"
           } > receipt/identity.txt
@@ -113,10 +117,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-  materialize-source:
-    name: Materialize Miniflare source successor
+  materialize-current-main:
+    name: Validate and materialize current-main successor
     needs: focused
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
     steps:
@@ -131,10 +136,11 @@ jobs:
         with:
           node-version: 22.22.1
 
-      - name: Generate exact product source
+      - name: Generate exact validated product patch
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p receipt-current-main
           cp .github/fieldwork/456/inject_runtime_wait_boundary.py \
             "$RUNNER_TEMP/inject_runtime_wait_boundary.py"
           git checkout --detach "$BASE_HEAD"
@@ -146,19 +152,78 @@ jobs:
             packages/miniflare/test/teardown-lifecycle.spec.ts
           git diff --check
           expected=$(printf '%s\n' \
+            .changeset/fuzzy-cats-dispose.md \
             packages/miniflare/src/index.ts \
             packages/miniflare/test/teardown-lifecycle.spec.ts | sort)
-          actual=$(git diff --name-only "$BASE_HEAD" | sort)
+          actual=$(git diff --name-only "$PUBLIC_BASE" -- \
+            .changeset/fuzzy-cats-dispose.md \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts | sort)
           test "$actual" = "$expected"
+          git diff --binary "$PUBLIC_BASE" -- \
+            .changeset/fuzzy-cats-dispose.md \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts \
+            > "$RUNNER_TEMP/miniflare-runtime-wait.patch"
 
-      - name: Commit source-only successor
+      - name: Apply exact product patch to current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git reset --hard
+          git checkout --detach "$CURRENT_MAIN"
+          git apply --3way "$RUNNER_TEMP/miniflare-runtime-wait.patch"
+          pnpm install --frozen-lockfile
+          pnpm exec oxfmt \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts
+          git diff --check
+          expected=$(printf '%s\n' \
+            .changeset/fuzzy-cats-dispose.md \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts | sort)
+          actual=$(git diff --name-only "$CURRENT_MAIN" | sort)
+          test "$actual" = "$expected"
+          git diff -- "$CURRENT_MAIN" -- \
+            .changeset/fuzzy-cats-dispose.md \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts \
+            > receipt-current-main/current-main-source.diff
+          {
+            echo "current_main=$CURRENT_MAIN"
+            echo "validated_base_head=$BASE_HEAD"
+            echo "public_base=$PUBLIC_BASE"
+            echo "node=$(node --version)"
+            echo "pnpm=$(pnpm --version)"
+          } > receipt-current-main/identity.txt
+
+      - name: Validate current-main successor
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter=miniflare... build 2>&1 | tee receipt-current-main/build.log
+          pnpm --filter miniflare exec vitest run \
+            test/teardown-lifecycle.spec.ts 2>&1 | tee receipt-current-main/test.log
+          pnpm --filter miniflare check:type 2>&1 | tee receipt-current-main/typecheck.log
+
+      - name: Commit current-main source successor
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'Fieldwork Agent'
           git config user.email 'fieldwork-agent@users.noreply.github.com'
           git checkout -B "$SOURCE_BRANCH"
-          git add packages/miniflare/src/index.ts \
+          git add .changeset/fuzzy-cats-dispose.md \
+            packages/miniflare/src/index.ts \
             packages/miniflare/test/teardown-lifecycle.spec.ts
           git commit -m 'fix(miniflare): await runtime exit after cleanup errors'
           git push --force-with-lease origin "HEAD:refs/heads/$SOURCE_BRANCH"
+
+      - name: Upload current-main receipt
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: fieldwork-456-miniflare-runtime-wait-current-main
+          path: receipt-current-main/
+          if-no-files-found: warn
+          retention-days: 30
