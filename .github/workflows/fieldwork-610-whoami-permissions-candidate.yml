@@ -1,0 +1,57 @@
+name: Fieldwork 610 Whoami Permissions Candidate
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fieldwork-610-whoami-permissions-candidate.yml"
+      - "fieldwork-patches/610-whoami-active-token-permissions.patch"
+      - "packages/wrangler/src/user/whoami.ts"
+      - "packages/wrangler/src/__tests__/whoami-active-token-permissions.test.ts"
+      - "packages/wrangler/package.json"
+      - "pnpm-lock.yaml"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  whoami-permissions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Verify exact evidence parent
+        run: test "$(git rev-parse HEAD^1)" = "e69097d0639396749f99525862a0d44eddadf05e"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply retained candidate with zero fuzz
+        run: |
+          git apply --check --whitespace=error-all \
+            fieldwork-patches/610-whoami-active-token-permissions.patch
+          git apply --whitespace=error-all \
+            fieldwork-patches/610-whoami-active-token-permissions.patch
+      - name: Check formatting
+        run: |
+          pnpm exec oxfmt --check \
+            packages/wrangler/src/user/whoami.ts \
+            packages/wrangler/src/__tests__/whoami-active-token-permissions.test.ts
+      - name: Run focused whoami regression
+        run: |
+          pnpm --filter wrangler test:ci -- \
+            whoami-active-token-permissions.test.ts
+      - name: Typecheck Wrangler
+        run: pnpm --filter wrangler check:type
+      - name: Verify exact source fence
+        run: |
+          git diff --check
+          mapfile -t changed < <(git diff --name-only | sort)
+          expected=(packages/wrangler/src/user/whoami.ts)
+          test "${changed[*]}" = "${expected[*]}"
