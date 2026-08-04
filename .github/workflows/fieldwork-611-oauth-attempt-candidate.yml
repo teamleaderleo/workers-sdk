@@ -1,0 +1,59 @@
+name: Fieldwork 611 OAuth Attempt Candidate
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fieldwork-611-oauth-attempt-candidate.yml"
+      - "fieldwork-patches/611-oauth-login-attempt-isolation.patch"
+      - "packages/workers-auth/src/flow.ts"
+      - "packages/workers-auth/tests/oauth-login-attempt-isolation.test.ts"
+      - "packages/workers-auth/package.json"
+      - "pnpm-lock.yaml"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  oauth-attempt-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Verify exact evidence parent
+        run: test "$(git rev-parse HEAD^1)" = "812d1d706f7fa798a9bbbe45f13663425f87c068"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply retained candidate with zero fuzz
+        run: |
+          git apply --check --whitespace=error-all \
+            fieldwork-patches/611-oauth-login-attempt-isolation.patch
+          git apply --whitespace=error-all \
+            fieldwork-patches/611-oauth-login-attempt-isolation.patch
+      - name: Check formatting
+        run: |
+          pnpm exec oxfmt --check \
+            packages/workers-auth/src/flow.ts \
+            packages/workers-auth/tests/oauth-login-attempt-isolation.test.ts
+      - name: Build workers-auth
+        run: pnpm --filter @cloudflare/workers-auth build
+      - name: Typecheck workers-auth
+        run: pnpm --filter @cloudflare/workers-auth check:type
+      - name: Run focused OAuth attempt regression
+        run: |
+          pnpm --filter @cloudflare/workers-auth exec vitest run \
+            tests/oauth-login-attempt-isolation.test.ts
+      - name: Verify exact source fence
+        run: |
+          git diff --check
+          mapfile -t changed < <(git diff --name-only | sort)
+          expected=(packages/workers-auth/src/flow.ts)
+          test "${changed[*]}" = "${expected[*]}"
