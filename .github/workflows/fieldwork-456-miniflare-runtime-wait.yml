@@ -1,0 +1,149 @@
+name: Fieldwork 456 Miniflare runtime wait boundary
+
+on:
+  pull_request:
+    paths:
+      - .github/fieldwork/456/inject_runtime_wait_boundary.py
+      - .github/workflows/fieldwork-456-miniflare-runtime-wait.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fieldwork-456-miniflare-runtime-wait-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  BASE_HEAD: d3ca9ad275e0cc93f985bb7485a776cec023d4ca
+  SOURCE_BRANCH: repair/miniflare-runtime-wait-source
+
+jobs:
+  focused:
+    name: Miniflare first-call runtime wait
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out exact experiment
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact base and experiment fence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base HEAD "$BASE_HEAD")" = "$BASE_HEAD"
+          expected=$(printf '%s\n' \
+            .github/fieldwork/456/inject_runtime_wait_boundary.py \
+            .github/workflows/fieldwork-456-miniflare-runtime-wait.yml | sort)
+          actual=$(git diff --name-only "$BASE_HEAD..HEAD" | sort)
+          test "$actual" = "$expected"
+          git diff --check "$BASE_HEAD..HEAD"
+          python -m py_compile .github/fieldwork/456/inject_runtime_wait_boundary.py
+
+      - name: Install repository dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          corepack enable
+          pnpm --version
+          pnpm install --frozen-lockfile
+
+      - name: Apply and format bounded repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p receipt
+          python .github/fieldwork/456/inject_runtime_wait_boundary.py
+          pnpm exec oxfmt \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts
+          pnpm exec oxfmt --check \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts \
+            2>&1 | tee receipt/format.log
+          git diff --check
+          expected=$(printf '%s\n' \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts | sort)
+          actual=$(git diff --name-only "$BASE_HEAD" | sort)
+          test "$actual" = "$expected"
+          git diff -- packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts \
+            > receipt/proposed-source.diff
+          {
+            echo "experiment_head=$(git rev-parse HEAD)"
+            echo "base_head=$BASE_HEAD"
+            echo "node=$(node --version)"
+            echo "pnpm=$(pnpm --version)"
+          } > receipt/identity.txt
+
+      - name: Run focused teardown lifecycle controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter miniflare exec vitest run \
+            test/teardown-lifecycle.spec.ts 2>&1 | tee receipt/test.log
+
+      - name: Check Miniflare types and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter miniflare check:type 2>&1 | tee receipt/typecheck.log
+          pnpm --filter miniflare build 2>&1 | tee receipt/build.log
+
+      - name: Upload exact receipt
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: fieldwork-456-miniflare-runtime-wait
+          path: receipt/
+          if-no-files-found: warn
+          retention-days: 30
+
+  materialize-source:
+    name: Materialize Miniflare source successor
+    needs: focused
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out validated experiment
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Generate exact product source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .github/fieldwork/456/inject_runtime_wait_boundary.py \
+            "$RUNNER_TEMP/inject_runtime_wait_boundary.py"
+          git checkout --detach "$BASE_HEAD"
+          corepack enable
+          pnpm install --frozen-lockfile
+          python "$RUNNER_TEMP/inject_runtime_wait_boundary.py"
+          pnpm exec oxfmt \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts
+          git diff --check
+          expected=$(printf '%s\n' \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts | sort)
+          actual=$(git diff --name-only "$BASE_HEAD" | sort)
+          test "$actual" = "$expected"
+
+      - name: Commit source-only successor
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Fieldwork Agent'
+          git config user.email 'fieldwork-agent@users.noreply.github.com'
+          git checkout -B "$SOURCE_BRANCH"
+          git add packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts
+          git commit -m 'fix(miniflare): await runtime exit after cleanup errors'
+          git push --force-with-lease origin "HEAD:refs/heads/$SOURCE_BRANCH"
