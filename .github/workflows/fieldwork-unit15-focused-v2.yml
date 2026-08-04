@@ -38,33 +38,33 @@ jobs:
 
           source_path = Path('packages/miniflare/src/index.ts')
           source = source_path.read_text(encoding='utf-8')
-          old = dedent('''\
-                      // Cleanup as much as possible even if `#init()` threw.
-                      await this.#closeBrowserProcesses();
-                      await this.#proxyClient?.dispose();
-                      await runtimeDisposePromise;
-          ''')
-          new = dedent('''\
-                      // Cleanup as much as possible even if `#init()` threw.
-                      let earlyCleanupFailed = false;
-                      let earlyCleanupError: unknown;
-                      try {
-                        await this.#closeBrowserProcesses();
-                        await this.#proxyClient?.dispose();
-                      } catch (error) {
-                        earlyCleanupFailed = true;
-                        earlyCleanupError = error;
-                      }
-
-                      try {
-                        await runtimeDisposePromise;
-                      } catch (error) {
-                        if (!earlyCleanupFailed) throw error;
-                      }
-                      if (earlyCleanupFailed) {
-                        throw earlyCleanupError;
-                      }
-          ''')
+          old = (
+              '\t\t\t// Cleanup as much as possible even if `#init()` threw.\n'
+              '\t\t\tawait this.#closeBrowserProcesses();\n'
+              '\t\t\tawait this.#proxyClient?.dispose();\n'
+              '\t\t\tawait runtimeDisposePromise;\n'
+          )
+          new = (
+              '\t\t\t// Cleanup as much as possible even if `#init()` threw.\n'
+              '\t\t\tlet earlyCleanupFailed = false;\n'
+              '\t\t\tlet earlyCleanupError: unknown;\n'
+              '\t\t\ttry {\n'
+              '\t\t\t\tawait this.#closeBrowserProcesses();\n'
+              '\t\t\t\tawait this.#proxyClient?.dispose();\n'
+              '\t\t\t} catch (error) {\n'
+              '\t\t\t\tearlyCleanupFailed = true;\n'
+              '\t\t\t\tearlyCleanupError = error;\n'
+              '\t\t\t}\n'
+              '\n'
+              '\t\t\ttry {\n'
+              '\t\t\t\tawait runtimeDisposePromise;\n'
+              '\t\t\t} catch (error) {\n'
+              '\t\t\t\tif (!earlyCleanupFailed) throw error;\n'
+              '\t\t\t}\n'
+              '\t\t\tif (earlyCleanupFailed) {\n'
+              '\t\t\t\tthrow earlyCleanupError;\n'
+              '\t\t\t}\n'
+          )
           if source.count(old) != 1:
               raise SystemExit(f'expected one cleanup boundary, found {source.count(old)}')
           source_path.write_text(source.replace(old, new, 1), encoding='utf-8')
