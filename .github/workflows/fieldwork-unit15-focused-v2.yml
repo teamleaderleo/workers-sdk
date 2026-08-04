@@ -16,7 +16,7 @@ permissions:
 jobs:
   miniflare-teardown:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -130,8 +130,12 @@ jobs:
           pnpm exec oxfmt --write \
             packages/miniflare/src/index.ts \
             packages/miniflare/test/teardown-lifecycle.spec.ts
-      - name: Run focused teardown lifecycle controls
-        run: pnpm --filter miniflare test -- teardown-lifecycle.spec.ts
+      - name: Build Miniflare for test setup
+        run: pnpm --filter miniflare build
+      - name: Run exact teardown lifecycle file
+        run: |
+          pnpm --filter miniflare exec vitest run \
+            test/teardown-lifecycle.spec.ts
       - name: Run Miniflare type check
         run: pnpm --filter miniflare check:type
       - name: Verify exact two-file fence
