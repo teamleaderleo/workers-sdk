@@ -42,6 +42,11 @@ jobs:
           git diff --check "$BASE_HEAD..HEAD"
           python -m py_compile .github/fieldwork/456/inject_runtime_wait_boundary.py
 
+      - name: Set up repository Node version
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.1
+
       - name: Install repository dependencies
         shell: bash
         run: |
@@ -80,6 +85,12 @@ jobs:
             echo "pnpm=$(pnpm --version)"
           } > receipt/identity.txt
 
+      - name: Build Miniflare dependency closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter=miniflare... build 2>&1 | tee receipt/build.log
+
       - name: Run focused teardown lifecycle controls
         shell: bash
         run: |
@@ -87,12 +98,11 @@ jobs:
           pnpm --filter miniflare exec vitest run \
             test/teardown-lifecycle.spec.ts 2>&1 | tee receipt/test.log
 
-      - name: Check Miniflare types and build
+      - name: Check Miniflare types
         shell: bash
         run: |
           set -euo pipefail
           pnpm --filter miniflare check:type 2>&1 | tee receipt/typecheck.log
-          pnpm --filter miniflare build 2>&1 | tee receipt/build.log
 
       - name: Upload exact receipt
         if: always()
@@ -115,6 +125,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
+
+      - name: Set up repository Node version
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.1
 
       - name: Generate exact product source
         shell: bash
