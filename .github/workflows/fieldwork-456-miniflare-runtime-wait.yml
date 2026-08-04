@@ -184,7 +184,7 @@ jobs:
             packages/miniflare/test/teardown-lifecycle.spec.ts | sort)
           actual=$(git diff --name-only "$CURRENT_MAIN" | sort)
           test "$actual" = "$expected"
-          git diff -- "$CURRENT_MAIN" -- \
+          git diff "$CURRENT_MAIN" -- \
             .changeset/fuzzy-cats-dispose.md \
             packages/miniflare/src/index.ts \
             packages/miniflare/test/teardown-lifecycle.spec.ts \
