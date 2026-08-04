@@ -1,0 +1,30 @@
+diff --git a/packages/workers-auth/src/flow.ts b/packages/workers-auth/src/flow.ts
+--- a/packages/workers-auth/src/flow.ts
++++ b/packages/workers-auth/src/flow.ts
+@@ -201,7 +201,6 @@ export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
+ export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
+-	const oauthFlowState: OAuthFlowState = {};
+ 	const generators = {
+ 		generateAuthUrl: ctx.generateAuthUrl ?? defaultGenerateAuthUrl,
+ 		generateRandomState: ctx.generateRandomState ?? defaultGenerateRandomState,
+ 	};
+ 
+@@ -251,6 +250,7 @@ export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
+ 			);
+ 		}
+ 
+ 		ctx.logger.log("Attempting to login via OAuth...");
++		const oauthFlowState: OAuthFlowState = {};
+ 
+ 		const oauth = await getOauthToken(
+
+# This is the minimum state-isolation repair. It does not by itself serialize
+# callback listeners using the same host and port.
+# Required controls before promotion:
+# - apply this patch with zero fuzz to the exact recorded base;
+# - execute oauth-login-attempt-isolation.test.ts against the patched source;
+# - add a callback-server integration test for two simultaneous default-port
+#   attempts;
+# - define whether compatible waiters share, queue, or receive a clear conflict;
+# - clear callback ownership after success, failure, timeout, and cancellation;
+# - never log state, verifier, authorization code, or token values.
