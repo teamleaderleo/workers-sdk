@@ -103,7 +103,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pnpm --filter miniflare exec vitest run \
+          pnpm --filter miniflare run test -- \
             test/teardown-lifecycle.spec.ts 2>&1 | tee receipt/test.log
 
       - name: Check Miniflare types
@@ -206,7 +206,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --filter=miniflare... build 2>&1 | tee receipt-current-main/build.log
-          pnpm --filter miniflare exec vitest run \
+          pnpm --filter miniflare run test -- \
             test/teardown-lifecycle.spec.ts 2>&1 | tee receipt-current-main/test.log
           pnpm --filter miniflare check:type 2>&1 | tee receipt-current-main/typecheck.log
 
