@@ -1,0 +1,126 @@
+name: Validate current Miniflare runtime wait
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/fieldwork-miniflare-runtime-wait-current.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: miniflare-runtime-wait-current-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_BASE: 99eb50ce1d3420a50ae0e95958bf49d65874706e
+  SOURCE_HEAD: 0eae5d63cc2a7f2cae7b91b89d533ecb271cc373
+
+jobs:
+  exact-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out execution carrier
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify carrier fence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_BASE"
+          test "$(git diff --name-only HEAD^ HEAD)" = .github/workflows/fieldwork-miniflare-runtime-wait-current.yml
+          git diff --check HEAD^ HEAD
+
+      - name: Check out exact current source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: teamleaderleo/workers-sdk
+          ref: ${{ env.SOURCE_HEAD }}
+          fetch-depth: 2
+          persist-credentials: false
+          path: candidate
+
+      - name: Verify exact source fence
+        shell: bash
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_BASE"
+          expected=$(printf '%s\n' \
+            .changeset/fuzzy-cats-dispose.md \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts | sort)
+          actual=$(git diff --name-only "$SOURCE_BASE" "$SOURCE_HEAD" | sort)
+          test "$actual" = "$expected"
+          git diff --check "$SOURCE_BASE" "$SOURCE_HEAD"
+
+      - name: Set up repository Node version
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.1
+
+      - name: Install locked dependencies
+        shell: bash
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          corepack enable
+          node --version
+          pnpm --version
+          pnpm install --frozen-lockfile
+
+      - name: Check focused formatting
+        shell: bash
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          pnpm exec oxfmt --check \
+            packages/miniflare/src/index.ts \
+            packages/miniflare/test/teardown-lifecycle.spec.ts \
+            2>&1 | tee ../miniflare-format.log
+
+      - name: Build Miniflare dependency closure
+        shell: bash
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          pnpm --filter=miniflare... build 2>&1 | tee ../miniflare-build.log
+
+      - name: Run lifecycle controls
+        shell: bash
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          pnpm --filter miniflare exec vitest run \
+            test/teardown-lifecycle.spec.ts 2>&1 | tee ../miniflare-tests.log
+
+      - name: Check Miniflare types
+        shell: bash
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          pnpm --filter miniflare check:type 2>&1 | tee ../miniflare-types.log
+          test -z "$(git status --porcelain)"
+
+      - name: Upload current-head receipt
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: miniflare-runtime-wait-current-${{ env.SOURCE_HEAD }}
+          path: |
+            miniflare-format.log
+            miniflare-build.log
+            miniflare-tests.log
+            miniflare-types.log
+          if-no-files-found: warn
+          retention-days: 30
