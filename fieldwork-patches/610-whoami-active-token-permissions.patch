@@ -11,7 +11,7 @@ diff --git a/packages/wrangler/src/user/whoami.ts b/packages/wrangler/src/user/w
  
  	return {
  		apiToken: "authKey" in apiToken ? apiToken.authKey : apiToken.apiToken,
-@@ -370,6 +370,11 @@ async function getAccounts(
+@@ -370,8 +370,13 @@ async function getAccounts(
  	});
  }
  
@@ -26,10 +26,3 @@ diff --git a/packages/wrangler/src/user/whoami.ts b/packages/wrangler/src/user/w
 +	}
  
  	return getScopes() as string[];
-
-# Required controls before promotion:
-# - execute whoami-active-token-permissions.test.ts;
-# - repeat the negative control for account API token and global key/email;
-# - verify named OAuth profiles return only their own scopes;
-# - keep the broader email/account/token-verification credential snapshot under
-#   Fieldwork #496 rather than widening this patch.
