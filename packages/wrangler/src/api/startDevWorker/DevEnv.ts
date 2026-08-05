@@ -38,31 +38,33 @@ export class DevEnv extends EventEmitter implements ControllerBus {
 	proxy: ProxyController;
 
 	async startWorker(options: WranglerStartDevWorkerInput): Promise<Worker> {
-		initDeployHelpersContext({
-			logger,
-			fetchResult,
-			fetchListResult,
-			fetchPagedListResult,
-			fetchKVGetValue,
-			confirm,
-			prompt,
-			select,
-		});
-
-		const worker = createWorkerObject(this);
-
-		try {
-			await this.config.set(options, true);
-		} catch (e) {
-			const error = new Error("An error occurred when starting the server", {
-				cause: e,
+		return runWithLogLevel(options.dev?.logLevel, async () => {
+			initDeployHelpersContext({
+				logger,
+				fetchResult,
+				fetchListResult,
+				fetchPagedListResult,
+				fetchKVGetValue,
+				confirm,
+				prompt,
+				select,
 			});
-			this.proxy.ready.reject(error);
-			await worker.dispose();
-			throw e;
-		}
 
-		return worker;
+			const worker = createWorkerObject(this);
+
+			try {
+				await this.config.set(options, true);
+			} catch (e) {
+				const error = new Error("An error occurred when starting the server", {
+					cause: e,
+				});
+				this.proxy.ready.reject(error);
+				await worker.dispose();
+				throw e;
+			}
+
+			return worker;
+		});
 	}
 
 	constructor({
@@ -92,6 +94,10 @@ export class DevEnv extends EventEmitter implements ControllerBus {
 		});
 	}
 
+	runInLogScope<V>(callback: () => V): V {
+		return runWithLogLevel(this.config.latestInput?.dev?.logLevel, callback);
+	}
+
 	/**
 	 * Central message bus dispatch method.
 	 * All events from controllers flow through here, making the event routing explicit and traceable.
@@ -111,61 +117,63 @@ export class DevEnv extends EventEmitter implements ControllerBus {
 	 * `RemoteProxySession.updateBindings` can wait for the reload to finish.
 	 */
 	dispatch(event: ControllerEvent): void {
-		switch (event.type) {
-			case "error":
-				this.handleErrorEvent(event);
-				break;
+		this.runInLogScope(() => {
+			switch (event.type) {
+				case "error":
+					this.handleErrorEvent(event);
+					break;
 
-			case "configUpdate":
-				this.bundler.onConfigUpdate(event);
-				this.proxy.onConfigUpdate(event);
-				break;
+				case "configUpdate":
+					this.bundler.onConfigUpdate(event);
+					this.proxy.onConfigUpdate(event);
+					break;
 
-			case "bundleStart":
-				this.proxy.onBundleStart(event);
-				this.runtimes.forEach((runtime) => {
-					runtime.onBundleStart(event);
-				});
-				break;
+				case "bundleStart":
+					this.proxy.onBundleStart(event);
+					this.runtimes.forEach((runtime) => {
+						runtime.onBundleStart(event);
+					});
+					break;
 
-			case "bundleComplete":
-				this.runtimes.forEach((runtime) => {
-					runtime.onBundleComplete(event);
-				});
-				break;
+				case "bundleComplete":
+					this.runtimes.forEach((runtime) => {
+						runtime.onBundleComplete(event);
+					});
+					break;
 
-			case "reloadStart":
-				this.proxy.onReloadStart(event);
-				break;
+				case "reloadStart":
+					this.proxy.onReloadStart(event);
+					break;
 
-			case "reloadComplete":
-				this.proxy.onReloadComplete(event);
-				this.emit("reloadComplete", event);
-				break;
+				case "reloadComplete":
+					this.proxy.onReloadComplete(event);
+					this.emit("reloadComplete", event);
+					break;
 
-			case "runtimeError":
-				// Re-emitted as an external EventEmitter event (like
-				// `reloadComplete`) so callers can observe runtime errors.
-				this.emit("runtimeError", event);
-				break;
+				case "runtimeError":
+					// Re-emitted as an external EventEmitter event (like
+					// `reloadComplete`) so callers can observe runtime errors.
+					this.emit("runtimeError", event);
+					break;
 
-			case "devRegistryUpdate":
-				this.config.onDevRegistryUpdate(event);
-				break;
+				case "devRegistryUpdate":
+					this.config.onDevRegistryUpdate(event);
+					break;
 
-			case "previewTokenExpired":
-				this.runtimes.forEach((runtime) => {
-					runtime.onPreviewTokenExpired(event);
-				});
-				break;
+				case "previewTokenExpired":
+					this.runtimes.forEach((runtime) => {
+						runtime.onPreviewTokenExpired(event);
+					});
+					break;
 
-			default: {
-				const _exhaustive: never = event;
-				logger.warn(
-					`Unknown event type: ${(_exhaustive as ControllerEvent).type}`
-				);
+				default: {
+					const _exhaustive: never = event;
+					logger.warn(
+						`Unknown event type: ${(_exhaustive as ControllerEvent).type}`
+					);
+				}
 			}
-		}
+		});
 	}
 
 	private handleErrorEvent(event: ErrorEvent): void {
@@ -215,7 +223,7 @@ export class DevEnv extends EventEmitter implements ControllerBus {
 	}
 
 	async teardown() {
-		await runWithLogLevel(this.config.latestInput?.dev?.logLevel, async () => {
+		await this.runInLogScope(async () => {
 			logger.debug("DevEnv teardown beginning...");
 
 			await Promise.all([
@@ -254,28 +262,34 @@ function createWorkerObject(devEnv: DevEnv): Worker {
 			return devEnv.config.patch(config);
 		},
 		async fetch(...args) {
-			const { proxyWorker } = await devEnv.proxy.ready.promise;
-			await devEnv.proxy.runtimeMessageMutex.drained();
+			return devEnv.runInLogScope(async () => {
+				const { proxyWorker } = await devEnv.proxy.ready.promise;
+				await devEnv.proxy.runtimeMessageMutex.drained();
 
-			return proxyWorker.dispatchFetch(...args);
+				return proxyWorker.dispatchFetch(...args);
+			});
 		},
 		async queue(...args) {
-			assert(
-				this.config.name,
-				"Worker name must be defined to use `Worker.queue()`"
-			);
-			const { proxyWorker } = await devEnv.proxy.ready.promise;
-			const w = await proxyWorker.getWorker(this.config.name);
-			return w.queue(...args);
+			return devEnv.runInLogScope(async () => {
+				assert(
+					this.config.name,
+					"Worker name must be defined to use `Worker.queue()`"
+				);
+				const { proxyWorker } = await devEnv.proxy.ready.promise;
+				const w = await proxyWorker.getWorker(this.config.name);
+				return w.queue(...args);
+			});
 		},
 		async scheduled(...args) {
-			assert(
-				this.config.name,
-				"Worker name must be defined to use `Worker.scheduled()`"
-			);
-			const { proxyWorker } = await devEnv.proxy.ready.promise;
-			const w = await proxyWorker.getWorker(this.config.name);
-			return w.scheduled(...args);
+			return devEnv.runInLogScope(async () => {
+				assert(
+					this.config.name,
+					"Worker name must be defined to use `Worker.scheduled()`"
+				);
+				const { proxyWorker } = await devEnv.proxy.ready.promise;
+				const w = await proxyWorker.getWorker(this.config.name);
+				return w.scheduled(...args);
+			});
 		},
 		async dispose() {
 			await devEnv.proxy.ready.promise.finally(() => devEnv.teardown());
