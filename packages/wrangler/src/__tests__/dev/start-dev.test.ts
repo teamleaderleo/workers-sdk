@@ -94,7 +94,9 @@ describe("startDev", () => {
 		expect,
 	}) => {
 		logger.loggerLevel = "log";
-		mocks.configSet.mockRejectedValueOnce(new Error("sentinel startup failure"));
+		mocks.configSet.mockRejectedValueOnce(
+			new Error("sentinel startup failure")
+		);
 
 		await expect(
 			startDev({
