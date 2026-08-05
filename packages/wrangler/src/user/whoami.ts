@@ -275,7 +275,7 @@ export async function getUserInfo(
 	}
 	const authType = await getAuthType(complianceConfig, apiToken);
 
-	const tokenPermissions = await getTokenPermissions();
+	const tokenPermissions = await getTokenPermissions(authType);
 
 	return {
 		apiToken: "authKey" in apiToken ? apiToken.authKey : apiToken.apiToken,
@@ -367,9 +367,14 @@ async function getAccounts(
 	});
 }
 
-async function getTokenPermissions(): Promise<string[] | undefined> {
+async function getTokenPermissions(
+	authType: AuthType
+): Promise<string[] | undefined> {
 	// Tokens can either be API tokens or Oauth tokens.
 	// Here we only extract permissions from OAuth tokens.
+	if (authType !== "OAuth Token") {
+		return undefined;
+	}
 
 	return getScopes() as string[];
 
