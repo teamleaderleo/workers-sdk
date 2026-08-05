@@ -5,6 +5,10 @@ import { logger } from "./logger";
 import { onKeyPress } from "./utils/onKeyPress";
 import type { Hook } from "./api";
 
+type RunInContext = <V>(callback: () => V) => V;
+
+const runDirectly: RunInContext = (callback) => callback();
+
 export default function (
 	options: Array<{
 		keys: string[];
@@ -12,7 +16,8 @@ export default function (
 		label?: Hook<string>;
 		handler: () => void | Promise<void>;
 	}>,
-	render = true
+	render = true,
+	runInContext: RunInContext = runDirectly
 ) {
 	/**
 	 * Formats all options, comma-separated, prefixed by the first key in square brackets.
@@ -78,38 +83,40 @@ export default function (
 		return /^[a-z]$/.test(key) && input === `shift+${key}`;
 	}
 
-	const unregisterKeyPress = onKeyPress(async (key) => {
-		const entries: string[] = [];
+	const unregisterKeyPress = onKeyPress((key) =>
+		runInContext(async () => {
+			const entries: string[] = [];
 
-		if (key.name) {
-			entries.push(key.name.toLowerCase());
-		}
-		if (key.meta) {
-			entries.unshift("meta");
-		}
-		if (key.ctrl) {
-			entries.unshift("ctrl");
-		}
-		if (key.shift) {
-			entries.unshift("shift");
-		}
-
-		const char = entries.join("+");
-
-		for (const { keys, handler, disabled } of options) {
-			if (unwrapHook(disabled)) {
-				continue;
+			if (key.name) {
+				entries.push(key.name.toLowerCase());
+			}
+			if (key.meta) {
+				entries.unshift("meta");
+			}
+			if (key.ctrl) {
+				entries.unshift("ctrl");
+			}
+			if (key.shift) {
+				entries.unshift("shift");
 			}
 
-			if (keys.some((registeredKey) => isKeyMatch(char, registeredKey))) {
-				try {
-					await handler();
-				} catch {
-					logger.error(`Error while handling hotkey [${char}]`);
+			const char = entries.join("+");
+
+			for (const { keys, handler, disabled } of options) {
+				if (unwrapHook(disabled)) {
+					continue;
+				}
+
+				if (keys.some((registeredKey) => isKeyMatch(char, registeredKey))) {
+					try {
+						await handler();
+					} catch {
+						logger.error(`Error while handling hotkey [${char}]`);
+					}
 				}
 			}
-		}
-	});
+		})
+	);
 
 	function printInstructions() {
 		const bottomFloat = formatInstructions();
