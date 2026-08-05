@@ -11,25 +11,24 @@ describe("account cache credential authority", () => {
 		vi.stubEnv("CLOUDFLARE_API_TOKEN", "token-A");
 	});
 
-	it("reuses an account cached under a previous environment token", async ({
+	it("treats the cached account as a current-authority preference", async ({
 		expect,
 	}) => {
 		let membershipRequests = 0;
-		msw.use(
-			http.get("*/memberships", () => {
-				membershipRequests += 1;
-				const account =
-					membershipRequests === 1
-						? { id: "account-A", name: "Account A" }
-						: { id: "account-B", name: "Account B" };
+		const accountForRequest = (request: Request) =>
+			request.headers.get("Authorization") === "Bearer token-B"
+				? { id: "account-B", name: "Account B" }
+				: { id: "account-A", name: "Account A" };
 
+		msw.use(
+			http.get("*/accounts", ({ request }) =>
+				HttpResponse.json(createFetchResult([accountForRequest(request)]))
+			),
+			http.get("*/memberships", ({ request }) => {
+				membershipRequests += 1;
+				const account = accountForRequest(request);
 				return HttpResponse.json(
-					createFetchResult([
-						{
-							id: `membership-${membershipRequests}`,
-							account,
-						},
-					])
+					createFetchResult([{ id: `membership-${account.id}`, account }])
 				);
 			})
 		);
@@ -39,12 +38,20 @@ describe("account cache credential authority", () => {
 			id: "account-A",
 			name: "Account A",
 		});
+		expect(membershipRequests).toBe(1);
 
 		vi.stubEnv("CLOUDFLARE_API_TOKEN", "token-B");
 
-		// Current behavior: the profile-scoped cache is returned before the
-		// accounts available to token B are queried.
-		expect(await getOrSelectAccountId({})).toBe("account-A");
-		expect(membershipRequests).toBe(1);
+		expect(await getOrSelectAccountId({})).toBe("account-B");
+		expect(getAccountFromCache()).toEqual({
+			id: "account-B",
+			name: "Account B",
+		});
+		expect(membershipRequests).toBe(2);
+
+		// With no immutable operation identity, an implicit cached account is
+		// rechecked on every call rather than being tied to credential bytes.
+		expect(await getOrSelectAccountId({})).toBe("account-B");
+		expect(membershipRequests).toBe(3);
 	});
 });

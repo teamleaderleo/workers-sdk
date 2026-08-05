@@ -1,0 +1,58 @@
+diff --git a/packages/workers-auth/src/core/factory.ts b/packages/workers-auth/src/core/factory.ts
+--- a/packages/workers-auth/src/core/factory.ts
++++ b/packages/workers-auth/src/core/factory.ts
+@@ -472,24 +472,29 @@ export function createCloudflareAuth(
+-	function getActiveAccountId(config: {
++	function getExplicitAccountId(config: {
+ 		account_id?: string;
+ 	}): string | undefined {
+ 		// When operating as a temporary preview account, its id is the whole
+ 		// identity and takes precedence over config/env/cache.
+ 		const temporaryAccount = oauthFlow.getActiveTemporaryAccount();
+ 		if (temporaryAccount) {
+ 			return temporaryAccount.account.id;
+ 		}
+ 
+ 		if (config.account_id) {
+ 			return validateAccountId(
+ 				config.account_id,
+ 				`set as \`account_id\` in your ${descriptor.getConfigFileLabel()} file`
+ 			);
+ 		}
+ 		const envAccountId = getAccountIdFromEnv();
+ 		if (envAccountId) {
+ 			return envAccountId;
+ 		}
+-		return getAccountFromCache()?.id;
++	}
++
++	function getActiveAccountId(config: {
++		account_id?: string;
++	}): string | undefined {
++		return getExplicitAccountId(config) ?? getAccountFromCache()?.id;
+ 	}
+ 
+ 	async function getOrSelectAccountId(
+@@ -498,10 +503,19 @@ export function createCloudflareAuth(
+ 		// TODO: v5 we should prioritise the env var instead of the config value here,
+ 		// for consistency with other env vars.
+-		const activeAccountId = getActiveAccountId(config);
+-		if (activeAccountId) {
+-			return activeAccountId;
++		const explicitAccountId = getExplicitAccountId(config);
++		if (explicitAccountId) {
++			return explicitAccountId;
+ 		}
+ 
++		const cachedAccount = getAccountFromCache();
+ 		const accounts = await fetchAllAccounts(config);
++		if (cachedAccount) {
++			const accessibleCachedAccount = accounts.find(
++				(account) => account.id === cachedAccount.id
++			);
++			if (accessibleCachedAccount) {
++				return cachedAccount.id;
++			}
++		}
+ 		if (accounts.length === 1) {
+ 			saveAccountToCache({ id: accounts[0].id, name: accounts[0].name });
