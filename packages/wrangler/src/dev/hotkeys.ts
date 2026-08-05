@@ -84,8 +84,8 @@ export default function registerDevHotKeys(
 								}
 							}
 						});
-						// cleanup any existing containers
 
+						// cleanup any existing containers
 						devEnv.runtimes.map((runtime) => {
 							if (runtime instanceof LocalRuntimeController) {
 								runtime.cleanupContainers();
@@ -180,7 +180,8 @@ export default function registerDevHotKeys(
 				},
 			},
 		],
-		render
+		render,
+		(callback) => primaryDevEnv.runInLogScope(callback)
 	);
 
 	return unregisterHotKeys;
