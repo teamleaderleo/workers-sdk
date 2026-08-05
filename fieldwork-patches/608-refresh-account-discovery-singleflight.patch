@@ -17,7 +17,7 @@ diff --git a/packages/workers-auth/src/flow.ts b/packages/workers-auth/src/flow.
  
  	function getStorage(profile?: string): AuthConfigStorage {
  		return ctx.storageFactory(profile ?? activeProfile);
-@@ -298,36 +299,61 @@ export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
+@@ -298,40 +299,65 @@ export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
 -	async function refreshToken(profile?: string): Promise<boolean> {
 +	async function performTokenRefresh(
 +		storage: AuthConfigStorage,
@@ -107,7 +107,7 @@ diff --git a/packages/workers-auth/src/core/factory.ts b/packages/workers-auth/s
 -		const credentials = requireApiToken();
 -
  		const results: ResponseType[] = [];
-@@ -403,13 +395,26 @@ export function createCloudflareAuth(
+@@ -403,11 +395,24 @@ export function createCloudflareAuth(
  		options: { throwOnEmpty?: boolean } = {}
  	): Promise<Account[]> {
  		const { throwOnEmpty = true } = options;
