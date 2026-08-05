@@ -106,4 +106,32 @@ describe("dev log-level session scope", () => {
 		expect(std.debug).toContain("sentinel runtime failure");
 		expect(logger.loggerLevel).toBe("error");
 	});
+
+	it("scopes external Worker config updates without changing the singleton logger", async ({
+		expect,
+	}) => {
+		logger.loggerLevel = "error";
+		const devEnv = new DevEnv();
+		const observedLevels: string[] = [];
+
+		vi.spyOn(devEnv.config, "set").mockImplementation(async (input) => {
+			observedLevels.push(logger.loggerLevel);
+			devEnv.config.latestInput = input;
+		});
+		vi.spyOn(devEnv.config, "patch").mockImplementation(async () => {
+			observedLevels.push(logger.loggerLevel);
+		});
+
+		const worker = await devEnv.startWorker({
+			dev: { logLevel: "warn" },
+		} as WranglerStartDevWorkerInput);
+		await worker.setConfig(
+			{ dev: { logLevel: "debug" } } as WranglerStartDevWorkerInput,
+			true
+		);
+		await worker.patchConfig({});
+
+		expect(observedLevels).toEqual(["warn", "debug", "debug"]);
+		expect(logger.loggerLevel).toBe("error");
+	});
 });
