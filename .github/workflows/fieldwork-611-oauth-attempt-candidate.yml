@@ -18,7 +18,9 @@ permissions:
 jobs:
   oauth-attempt-isolation:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,10 +45,10 @@ jobs:
           pnpm exec oxfmt --check \
             packages/workers-auth/src/flow.ts \
             packages/workers-auth/tests/oauth-login-attempt-isolation.test.ts
-      - name: Build workers-auth
-        run: pnpm --filter @cloudflare/workers-auth build
-      - name: Typecheck workers-auth
-        run: pnpm --filter @cloudflare/workers-auth check:type
+      - name: Build workers-auth with workspace dependencies
+        run: pnpm run build --filter=@cloudflare/workers-auth...
+      - name: Typecheck workers-auth with workspace dependencies
+        run: pnpm run check:type --filter=@cloudflare/workers-auth...
       - name: Run focused OAuth attempt regression
         run: |
           pnpm --filter @cloudflare/workers-auth exec vitest run \
