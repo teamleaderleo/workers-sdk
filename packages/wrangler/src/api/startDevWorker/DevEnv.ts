@@ -256,10 +256,16 @@ function createWorkerObject(devEnv: DevEnv): Worker {
 			return devEnv.config.latestConfig;
 		},
 		async setConfig(config, throwErrors) {
-			return devEnv.config.set(config, throwErrors);
+			const logLevel =
+				config.dev?.logLevel ?? devEnv.config.latestInput?.dev?.logLevel;
+			return runWithLogLevel(logLevel, () =>
+				devEnv.config.set(config, throwErrors)
+			);
 		},
 		patchConfig(config) {
-			return devEnv.config.patch(config);
+			const logLevel =
+				config.dev?.logLevel ?? devEnv.config.latestInput?.dev?.logLevel;
+			return runWithLogLevel(logLevel, () => devEnv.config.patch(config));
 		},
 		async fetch(...args) {
 			return runInDevEnvLogScope(devEnv, async () => {
