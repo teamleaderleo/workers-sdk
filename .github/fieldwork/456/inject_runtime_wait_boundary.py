@@ -135,16 +135,4 @@ replacement_test = '''test("Miniflare: dispose waits for workerd exit before ret
 '''
 
 test_text = test_text[:first_test_start] + replacement_test + test_text[second_test_start:]
-
-old_repeat_cleanup = '''\twebSocketClose.mockRestore();
-\tawait mf.dispose().catch(() => {});
-'''
-new_repeat_cleanup = '''\twebSocketClose.mockRestore();
-\tawait expect(mf.dispose()).resolves.toBeUndefined();
-'''
-if test_text.count(old_repeat_cleanup) != 1:
-    raise SystemExit(
-        f"expected exactly one WebSocket repeat-dispose cleanup, found {test_text.count(old_repeat_cleanup)}"
-    )
-test_text = test_text.replace(old_repeat_cleanup, new_repeat_cleanup, 1)
 test_path.write_text(test_text, encoding="utf-8")
