@@ -94,10 +94,6 @@ export class DevEnv extends EventEmitter implements ControllerBus {
 		});
 	}
 
-	runInLogScope<V>(callback: () => V): V {
-		return runWithLogLevel(this.config.latestInput?.dev?.logLevel, callback);
-	}
-
 	/**
 	 * Central message bus dispatch method.
 	 * All events from controllers flow through here, making the event routing explicit and traceable.
@@ -117,7 +113,7 @@ export class DevEnv extends EventEmitter implements ControllerBus {
 	 * `RemoteProxySession.updateBindings` can wait for the reload to finish.
 	 */
 	dispatch(event: ControllerEvent): void {
-		this.runInLogScope(() => {
+		runInDevEnvLogScope(this, () => {
 			switch (event.type) {
 				case "error":
 					this.handleErrorEvent(event);
@@ -223,7 +219,7 @@ export class DevEnv extends EventEmitter implements ControllerBus {
 	}
 
 	async teardown() {
-		await this.runInLogScope(async () => {
+		await runInDevEnvLogScope(this, async () => {
 			logger.debug("DevEnv teardown beginning...");
 
 			await Promise.all([
@@ -238,6 +234,10 @@ export class DevEnv extends EventEmitter implements ControllerBus {
 			logger.debug("DevEnv teardown complete");
 		});
 	}
+}
+
+export function runInDevEnvLogScope<V>(devEnv: DevEnv, callback: () => V): V {
+	return runWithLogLevel(devEnv.config.latestInput?.dev?.logLevel, callback);
 }
 
 function createWorkerObject(devEnv: DevEnv): Worker {
@@ -262,7 +262,7 @@ function createWorkerObject(devEnv: DevEnv): Worker {
 			return devEnv.config.patch(config);
 		},
 		async fetch(...args) {
-			return devEnv.runInLogScope(async () => {
+			return runInDevEnvLogScope(devEnv, async () => {
 				const { proxyWorker } = await devEnv.proxy.ready.promise;
 				await devEnv.proxy.runtimeMessageMutex.drained();
 
@@ -270,7 +270,7 @@ function createWorkerObject(devEnv: DevEnv): Worker {
 			});
 		},
 		async queue(...args) {
-			return devEnv.runInLogScope(async () => {
+			return runInDevEnvLogScope(devEnv, async () => {
 				assert(
 					this.config.name,
 					"Worker name must be defined to use `Worker.queue()`"
@@ -281,7 +281,7 @@ function createWorkerObject(devEnv: DevEnv): Worker {
 			});
 		},
 		async scheduled(...args) {
-			return devEnv.runInLogScope(async () => {
+			return runInDevEnvLogScope(devEnv, async () => {
 				assert(
 					this.config.name,
 					"Worker name must be defined to use `Worker.scheduled()`"
