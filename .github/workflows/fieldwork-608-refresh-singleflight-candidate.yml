@@ -8,6 +8,7 @@ on:
       - "packages/workers-auth/src/flow.ts"
       - "packages/workers-auth/src/core/factory.ts"
       - "packages/workers-auth/tests/refresh-singleflight.test.ts"
+      - "packages/workers-auth/tests/fetch-all-accounts-credential-snapshot.test.ts"
       - "packages/workers-auth/package.json"
       - "pnpm-lock.yaml"
       - "package.json"
@@ -27,7 +28,7 @@ jobs:
         with:
           fetch-depth: 2
       - name: Verify exact evidence parent
-        run: test "$(git rev-parse HEAD^1)" = "a78631485ad624169a8a19eac9158294de65e52b"
+        run: test "$(git rev-parse HEAD^1)" = "0c05a408d165ccf76984b27e95b56f1d7570017e"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.1
@@ -41,7 +42,9 @@ jobs:
         run: |
           set +e
           FORCE_COLOR=0 pnpm --filter @cloudflare/workers-auth exec vitest run \
-            tests/refresh-singleflight.test.ts 2>&1 | tee baseline.log
+            tests/refresh-singleflight.test.ts \
+            tests/fetch-all-accounts-credential-snapshot.test.ts \
+            2>&1 | tee baseline.log
           status=${PIPESTATUS[0]}
           set -e
           test "$status" -ne 0
@@ -58,11 +61,13 @@ jobs:
           pnpm exec oxfmt \
             packages/workers-auth/src/flow.ts \
             packages/workers-auth/src/core/factory.ts \
-            packages/workers-auth/tests/refresh-singleflight.test.ts
+            packages/workers-auth/tests/refresh-singleflight.test.ts \
+            packages/workers-auth/tests/fetch-all-accounts-credential-snapshot.test.ts
           pnpm exec oxfmt --check \
             packages/workers-auth/src/flow.ts \
             packages/workers-auth/src/core/factory.ts \
-            packages/workers-auth/tests/refresh-singleflight.test.ts
+            packages/workers-auth/tests/refresh-singleflight.test.ts \
+            packages/workers-auth/tests/fetch-all-accounts-credential-snapshot.test.ts
       - name: Build candidate with workspace dependencies
         run: pnpm run build --filter=@cloudflare/workers-auth...
       - name: Typecheck candidate with workspace dependencies
@@ -70,7 +75,8 @@ jobs:
       - name: Require focused candidate to pass
         run: |
           pnpm --filter @cloudflare/workers-auth exec vitest run \
-            tests/refresh-singleflight.test.ts
+            tests/refresh-singleflight.test.ts \
+            tests/fetch-all-accounts-credential-snapshot.test.ts
       - name: Verify exact source fence
         run: |
           git diff --check
