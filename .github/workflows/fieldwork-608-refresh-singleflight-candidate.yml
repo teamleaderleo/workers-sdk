@@ -28,7 +28,7 @@ jobs:
         with:
           fetch-depth: 2
       - name: Verify exact evidence parent
-        run: test "$(git rev-parse HEAD^1)" = "0c05a408d165ccf76984b27e95b56f1d7570017e"
+        run: test "$(git rev-parse HEAD^1)" = "13911eca8d3076b9637fcdb176cf1042e17d690f"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.1
