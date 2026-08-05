@@ -3328,14 +3328,26 @@ export class Miniflare {
 		try {
 			await this.#waitForReady(/* disposing */ true);
 		} finally {
-			await this.#closeBrowserProcesses();
-
 			// Remove exit hook, we're cleaning up what they would've cleaned up now
 			this.#removeExitHook?.();
 
-			// Cleanup as much as possible even if `#init()` threw
+			// Runtime.dispose() requests workerd termination synchronously before
+			// returning its child-exit promise. Start it before awaiting other cleanup
+			// so those hooks cannot delay or skip the termination request.
+			let runtimeDisposePromise: Promise<void>;
+			try {
+				runtimeDisposePromise = Promise.resolve(this.#runtime?.dispose());
+			} catch (error) {
+				runtimeDisposePromise = Promise.reject(error);
+			}
+			// An earlier cleanup failure may prevent the final await. Observe the
+			// rejection immediately while preserving it for the normal await below.
+			void runtimeDisposePromise.catch(() => {});
+
+			// Cleanup as much as possible even if `#init()` threw.
+			await this.#closeBrowserProcesses();
 			await this.#proxyClient?.dispose();
-			await this.#runtime?.dispose();
+			await runtimeDisposePromise;
 			// Close the undici Pool used for dispatching fetch requests to the
 			// runtime. This must happen after the runtime is disposed, so that
 			// in-flight connections are broken and close immediately. Without this,
