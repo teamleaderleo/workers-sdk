@@ -42,7 +42,42 @@ if index_text.count(old_cleanup) != 1:
     raise SystemExit(
         f"expected exactly one Miniflare cleanup block, found {index_text.count(old_cleanup)}"
     )
-index_path.write_text(index_text.replace(old_cleanup, new_cleanup, 1), encoding="utf-8")
+index_text = index_text.replace(old_cleanup, new_cleanup, 1)
+
+registry_try_anchor = '''\t\t\t// Remove exit hook, we're cleaning up what they would've cleaned up now
+\t\t\tthis.#removeExitHook?.();
+
+\t\t\t// Runtime.dispose() requests workerd termination synchronously before
+'''
+registry_try_replacement = '''\t\t\t// Remove exit hook, we're cleaning up what they would've cleaned up now
+\t\t\tthis.#removeExitHook?.();
+
+\t\t\ttry {
+\t\t\t\t// Runtime.dispose() requests workerd termination synchronously before
+'''
+if index_text.count(registry_try_anchor) != 1:
+    raise SystemExit(
+        f"expected one disposal-registry try anchor, found {index_text.count(registry_try_anchor)}"
+    )
+index_text = index_text.replace(registry_try_anchor, registry_try_replacement, 1)
+
+registry_tail = '''\t\t\t// Remove from instance registry as last step in `finally`, to make sure
+\t\t\t// all dispose steps complete
+\t\t\tmaybeInstanceRegistry?.delete(this);
+'''
+registry_tail_replacement = '''\t\t\t} finally {
+\t\t\t\t// A disposal attempt is terminal for instance-registry bookkeeping even
+\t\t\t\t// when a cleanup owner reports failure. The caller still receives that
+\t\t\t\t// failure, but the instance was not left undisposed by the caller.
+\t\t\t\tmaybeInstanceRegistry?.delete(this);
+\t\t\t}
+'''
+if index_text.count(registry_tail) != 1:
+    raise SystemExit(
+        f"expected one instance-registry tail, found {index_text.count(registry_tail)}"
+    )
+index_text = index_text.replace(registry_tail, registry_tail_replacement, 1)
+index_path.write_text(index_text, encoding="utf-8")
 
 test_path = Path("packages/miniflare/test/teardown-lifecycle.spec.ts")
 test_text = test_path.read_text(encoding="utf-8")
@@ -95,6 +130,7 @@ replacement_test = '''test("Miniflare: dispose waits for workerd exit before ret
 \t\t.mockRejectedValueOnce(new Error("injected proxy cleanup failure"));
 \tconst kill = vi.spyOn(childProcess.ChildProcess.prototype, "kill");
 
+\tlet runtimeExitReleased = false;
 \tlet firstDisposeSettled = false;
 \tconst firstDisposeResult = mf.dispose().then(
 \t\t() => {
@@ -107,29 +143,34 @@ replacement_test = '''test("Miniflare: dispose waits for workerd exit before ret
 \t\t}
 \t);
 
-\tawait runtimeExitObserved;
-\tawait new Promise<void>((resolve) => setImmediate(resolve));
-\texpect(firstDisposeSettled).toBe(false);
+\ttry {
+\t\tawait runtimeExitObserved;
+\t\tawait new Promise<void>((resolve) => setImmediate(resolve));
+\t\texpect(firstDisposeSettled).toBe(false);
 
-\tconst killedWorkerd = findKilledWorkerd(kill);
-\texpect(killedWorkerd).toBeDefined();
-\treleaseRuntimeExit();
+\t\tconst killedWorkerd = findKilledWorkerd(kill);
+\t\texpect(killedWorkerd).toBeDefined();
+\t\treleaseRuntimeExit();
+\t\truntimeExitReleased = true;
 
-\tconst firstDisposeError = await firstDisposeResult;
-\texpect(firstDisposeError).toBeInstanceOf(Error);
-\texpect((firstDisposeError as Error).message).toContain(
-\t\t"injected proxy cleanup failure"
-\t);
-\tif (killedWorkerd === undefined) {
-\t\tthrow new Error("expected workerd to receive SIGKILL");
+\t\tconst firstDisposeError = await firstDisposeResult;
+\t\texpect(firstDisposeError).toBeInstanceOf(Error);
+\t\texpect((firstDisposeError as Error).message).toContain(
+\t\t\t"injected proxy cleanup failure"
+\t\t);
+\t\tif (killedWorkerd === undefined) {
+\t\t\tthrow new Error("expected workerd to receive SIGKILL");
+\t\t}
+\t\texpect(
+\t\t\tkilledWorkerd.exitCode !== null || killedWorkerd.signalCode !== null
+\t\t).toBe(true);
+\t} finally {
+\t\tif (!runtimeExitReleased) releaseRuntimeExit();
+\t\temit.mockRestore();
+\t\tproxyDispose.mockRestore();
+\t\tawait firstDisposeResult;
+\t\tawait mf.dispose().catch(() => {});
 \t}
-\texpect(
-\t\tkilledWorkerd.exitCode !== null || killedWorkerd.signalCode !== null
-\t).toBe(true);
-
-\temit.mockRestore();
-\tproxyDispose.mockRestore();
-\tawait mf.dispose().catch(() => {});
 });
 
 '''
