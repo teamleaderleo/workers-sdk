@@ -367,12 +367,9 @@ function maybePrintScheduledWorkerWarning(
 	const port = url.port;
 
 	logger.once.warn(
-		`Scheduled Workers are not automatically triggered during local development.\
-` +
-			`To manually trigger a scheduled event, run:\
-` +
-			`  curl "http://${host}:${port}/cdn-cgi/local/scheduled"\
-` +
+		`Scheduled Workers are not automatically triggered during local development.\n` +
+			`To manually trigger a scheduled event, run:\n` +
+			`  curl "http://${host}:${port}/cdn-cgi/local/scheduled"\n` +
 			`For more details, see https://developers.cloudflare.com/workers/configuration/cron-triggers/#test-cron-triggers-locally`
 	);
 }
@@ -392,7 +389,7 @@ function printLocalExplorerAgentHint(url: URL): void {
 		  GET ${explorerApiUrl}/workers/durable_objects/namespaces - Durable Object namespaces
 		  GET ${explorerApiUrl}/workflows - Workflows
 		  POST ${explorerApiUrl}/local/observability/query - run a read-only SQL query (SELECT/WITH only) over captured request traces and console logs. Tables: spans, logs (read attributes via json(attributes)). Example:
-		    curl -X POST ${explorerApiUrl}/local/observability/query -H 'Content-Type: application/json' -d '{"sql":"SELECT service, name, outcome, duration_ms FROM spans WHERE parent_id IS NULL LIMIT 20"}'`
+		    curl -X POST ${explorerApiUrl}/local/observability/query -H 'Content-Type: application/json' -d '{"sql":"SELECT service, name, outcome, duration_ms FROM spans WHERE parent_id IS NULL LIMIT 20"}'
 		If the routes above don't cover what you need, fetch the full OpenAPI schema (large - use only as a last resort):
 		  GET ${explorerApiUrl} - OpenAPI schema`);
 }
