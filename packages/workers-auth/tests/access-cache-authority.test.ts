@@ -81,7 +81,7 @@ describe("Access cache authority", () => {
 		});
 	});
 
-	it("does not replace a partial current pair with a cached complete pair", async ({
+	it("does not replace an ID-only current pair with a cached complete pair", async ({
 		expect,
 	}) => {
 		vi.stubEnv("CLOUDFLARE_ACCESS_CLIENT_ID", "sentinel-client-A");
@@ -95,9 +95,25 @@ describe("Access cache authority", () => {
 			getAccessHeaders("access-protected.com", options)
 		).rejects.toThrow("no Access Service Token credentials were found");
 		expect(silentLogger.warn).toHaveBeenCalledWith(
-			expect.stringContaining(
-				"Only CLOUDFLARE_ACCESS_CLIENT_ID was found"
-			)
+			expect.stringContaining("Only CLOUDFLARE_ACCESS_CLIENT_ID was found")
+		);
+	});
+
+	it("does not replace a secret-only current pair with a cached complete pair", async ({
+		expect,
+	}) => {
+		vi.stubEnv("CLOUDFLARE_ACCESS_CLIENT_ID", "sentinel-client-A");
+		vi.stubEnv("CLOUDFLARE_ACCESS_CLIENT_SECRET", "sentinel-secret-A");
+		await getAccessHeaders("access-protected.com", options);
+
+		vi.unstubAllEnvs();
+		vi.stubEnv("CLOUDFLARE_ACCESS_CLIENT_SECRET", "sentinel-secret-B");
+
+		await expect(
+			getAccessHeaders("access-protected.com", options)
+		).rejects.toThrow("no Access Service Token credentials were found");
+		expect(silentLogger.warn).toHaveBeenCalledWith(
+			expect.stringContaining("Only CLOUDFLARE_ACCESS_CLIENT_SECRET was found")
 		);
 	});
 
