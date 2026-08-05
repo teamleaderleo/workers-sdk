@@ -47,17 +47,6 @@ index_path.write_text(index_text.replace(old_cleanup, new_cleanup, 1), encoding=
 test_path = Path("packages/miniflare/test/teardown-lifecycle.spec.ts")
 test_text = test_path.read_text(encoding="utf-8")
 
-old_import = 'import { Miniflare, ProxyClient } from "miniflare";'
-new_import = (
-    'import { Miniflare, ProxyClient } from "miniflare";\n'
-    'import { Runtime } from "../src/runtime";'
-)
-if test_text.count(old_import) != 1:
-    raise SystemExit(
-        f"expected exactly one Miniflare import, found {test_text.count(old_import)}"
-    )
-test_text = test_text.replace(old_import, new_import, 1)
-
 first_test_start = test_text.index(
     'test("Miniflare: dispose kills workerd after proxy cleanup rejects"'
 )
@@ -69,23 +58,38 @@ second_test_start = test_text.index(
 replacement_test = '''test("Miniflare: dispose waits for workerd exit before returning proxy cleanup failure", async ({
 \texpect,
 }) => {
-\tconst mf = await createReadyMiniflare();
-\tlet markRuntimeDisposeStarted!: () => void;
-\tlet releaseRuntimeDispose!: () => void;
-\tconst runtimeDisposeStarted = new Promise<void>((resolve) => {
-\t\tmarkRuntimeDisposeStarted = resolve;
+\tlet markRuntimeExitObserved!: () => void;
+\tlet releaseRuntimeExit!: () => void;
+\tconst runtimeExitObserved = new Promise<void>((resolve) => {
+\t\tmarkRuntimeExitObserved = resolve;
 \t});
-\tconst runtimeDisposeBlocked = new Promise<void>((resolve) => {
-\t\treleaseRuntimeDispose = resolve;
+\tconst runtimeExitBlocked = new Promise<void>((resolve) => {
+\t\treleaseRuntimeExit = resolve;
 \t});
-\tconst originalRuntimeDispose = Runtime.prototype.dispose;
-\tconst runtimeDispose = vi
-\t\t.spyOn(Runtime.prototype, "dispose")
-\t\t.mockImplementation(function (this: Runtime) {
-\t\t\tconst result = originalRuntimeDispose.call(this);
-\t\t\tmarkRuntimeDisposeStarted();
-\t\t\treturn Promise.resolve(result).then(() => runtimeDisposeBlocked);
+\tconst originalEmit = childProcess.ChildProcess.prototype.emit;
+\tlet interceptedRuntimeExit = false;
+\tconst emit = vi
+\t\t.spyOn(childProcess.ChildProcess.prototype, "emit")
+\t\t.mockImplementation(function (
+\t\t\tthis: childProcess.ChildProcess,
+\t\t\tevent: string | symbol,
+\t\t\t...args: unknown[]
+\t\t) {
+\t\t\tif (
+\t\t\t\t!interceptedRuntimeExit &&
+\t\t\t\tevent === "exit" &&
+\t\t\t\tpath.basename(this.spawnfile).toLowerCase().startsWith("workerd")
+\t\t\t) {
+\t\t\t\tinterceptedRuntimeExit = true;
+\t\t\t\tmarkRuntimeExitObserved();
+\t\t\t\tvoid runtimeExitBlocked.then(() => {
+\t\t\t\t\tReflect.apply(originalEmit, this, [event, ...args]);
+\t\t\t\t});
+\t\t\t\treturn true;
+\t\t\t}
+\t\t\treturn Reflect.apply(originalEmit, this, [event, ...args]) as boolean;
 \t\t});
+\tconst mf = await createReadyMiniflare();
 \tconst proxyDispose = vi
 \t\t.spyOn(ProxyClient.prototype, "dispose")
 \t\t.mockRejectedValueOnce(new Error("injected proxy cleanup failure"));
@@ -103,13 +107,13 @@ replacement_test = '''test("Miniflare: dispose waits for workerd exit before ret
 \t\t}
 \t);
 
-\tawait runtimeDisposeStarted;
+\tawait runtimeExitObserved;
 \tawait new Promise<void>((resolve) => setImmediate(resolve));
 \texpect(firstDisposeSettled).toBe(false);
 
 \tconst killedWorkerd = findKilledWorkerd(kill);
 \texpect(killedWorkerd).toBeDefined();
-\treleaseRuntimeDispose();
+\treleaseRuntimeExit();
 
 \tconst firstDisposeError = await firstDisposeResult;
 \texpect(firstDisposeError).toBeInstanceOf(Error);
@@ -123,7 +127,7 @@ replacement_test = '''test("Miniflare: dispose waits for workerd exit before ret
 \t\tkilledWorkerd.exitCode !== null || killedWorkerd.signalCode !== null
 \t).toBe(true);
 
-\truntimeDispose.mockRestore();
+\temit.mockRestore();
 \tproxyDispose.mockRestore();
 \tawait mf.dispose().catch(() => {});
 });
