@@ -53,8 +53,12 @@ jobs:
             fieldwork-patches/608-refresh-account-discovery-singleflight.patch
           git apply --whitespace=error-all \
             fieldwork-patches/608-refresh-account-discovery-singleflight.patch
-      - name: Check formatting
+      - name: Format and check candidate
         run: |
+          pnpm exec oxfmt \
+            packages/workers-auth/src/flow.ts \
+            packages/workers-auth/src/core/factory.ts \
+            packages/workers-auth/tests/refresh-singleflight.test.ts
           pnpm exec oxfmt --check \
             packages/workers-auth/src/flow.ts \
             packages/workers-auth/src/core/factory.ts \
