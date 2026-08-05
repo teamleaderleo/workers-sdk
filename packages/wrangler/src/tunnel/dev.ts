@@ -2,10 +2,11 @@ import { dim } from "@cloudflare/cli-shared-helpers/colors";
 import { startTunnel } from "@cloudflare/workers-utils";
 import chalk from "chalk";
 import encodeQR from "qr";
+import { runInDevEnvLogScope } from "../api/startDevWorker/DevEnv";
 import { formatHostname } from "../dev/start-dev";
 import { logger } from "../logger";
 import { resolveNamedTunnel } from "./client";
-import type { DevEnv } from "../api";
+import type { DevEnv } from "../api/startDevWorker/DevEnv";
 import type { StartDevOptions } from "../dev";
 import type { Tunnel } from "@cloudflare/workers-utils";
 
@@ -28,7 +29,7 @@ export class TunnelManager {
 	}
 
 	async start(shortcutPressed = false): Promise<void> {
-		return this.primaryDevEnv.runInLogScope(async () => {
+		return runInDevEnvLogScope(this.primaryDevEnv, async () => {
 			if (this.tunnel) {
 				return;
 			}
@@ -97,7 +98,7 @@ export class TunnelManager {
 	}
 
 	async stop(): Promise<void> {
-		return this.primaryDevEnv.runInLogScope(async () => {
+		return runInDevEnvLogScope(this.primaryDevEnv, async () => {
 			if (!this.tunnel) {
 				return;
 			}
