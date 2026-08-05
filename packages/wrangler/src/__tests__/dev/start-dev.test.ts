@@ -62,6 +62,11 @@ describe("startDev", () => {
 	it("unregisters the latest hotkey registration after auth re-registers hotkeys", async ({
 		expect,
 	}) => {
+		logger.loggerLevel = "error";
+		vi.mocked(requireAuth).mockImplementationOnce(async () => {
+			logger.debug("sentinel auth hook log");
+			return "test-account-id";
+		});
 		const unregisterHotKeys = [vi.fn(), vi.fn()];
 		vi.mocked(registerDevHotKeys)
 			.mockReturnValueOnce(unregisterHotKeys[0])
@@ -70,6 +75,7 @@ describe("startDev", () => {
 		const result = await startDev({
 			disableDevRegistry: true,
 			showInteractiveDevSession: true,
+			logLevel: "debug",
 		} as StartDevOptions);
 
 		expect(registerDevHotKeys).toHaveBeenCalledTimes(1);
@@ -81,6 +87,8 @@ describe("startDev", () => {
 		await (auth as (arg: { account_id?: string }) => Promise<unknown>)({});
 
 		expect(requireAuth).toHaveBeenCalledOnce();
+		expect(std.debug).toContain("sentinel auth hook log");
+		expect(logger.loggerLevel).toBe("error");
 		expect(unregisterHotKeys[0]).toHaveBeenCalledOnce();
 		expect(registerDevHotKeys).toHaveBeenCalledTimes(2);
 
@@ -90,7 +98,7 @@ describe("startDev", () => {
 		expect(unregisterHotKeys[1]).toHaveBeenCalledOnce();
 	});
 
-	it("leaves a failed dev session's log level on the singleton logger", async ({
+	it("does not change the singleton logger after failed startup", async ({
 		expect,
 	}) => {
 		logger.loggerLevel = "log";
@@ -106,10 +114,10 @@ describe("startDev", () => {
 			} as StartDevOptions)
 		).rejects.toThrow("sentinel startup failure");
 
-		expect(logger.loggerLevel).toBe("error");
+		expect(logger.loggerLevel).toBe("log");
 	});
 
-	it("leaves a stopped dev session's log level on the singleton logger", async ({
+	it("does not change the singleton logger after session teardown", async ({
 		expect,
 	}) => {
 		logger.loggerLevel = "log";
@@ -121,19 +129,25 @@ describe("startDev", () => {
 		} as StartDevOptions);
 		await result.devEnv.teardown();
 
-		expect(logger.loggerLevel).toBe("debug");
+		expect(logger.loggerLevel).toBe("log");
 	});
 
-	it("lets a later overlapping dev session replace the earlier session's log level", async ({
+	it("keeps overlapping startup continuations in their own log scopes", async ({
 		expect,
 	}) => {
+		logger.loggerLevel = "error";
 		let releaseFirstSetup: (() => void) | undefined;
 		const firstSetup = new Promise<void>((resolve) => {
 			releaseFirstSetup = resolve;
 		});
 		mocks.configSet
-			.mockImplementationOnce(() => firstSetup)
-			.mockResolvedValueOnce(undefined);
+			.mockImplementationOnce(async () => {
+				await firstSetup;
+				logger.debug("sentinel first-session debug log");
+			})
+			.mockImplementationOnce(async () => {
+				logger.debug("sentinel second-session debug log");
+			});
 
 		const firstSession = startDev({
 			disableDevRegistry: true,
@@ -149,11 +163,39 @@ describe("startDev", () => {
 			showInteractiveDevSession: false,
 			logLevel: "error",
 		} as StartDevOptions);
-		expect(logger.loggerLevel).toBe("error");
+		expect(std.debug).not.toContain("sentinel second-session debug log");
 
 		releaseFirstSetup?.();
 		await firstSession;
 
+		expect(std.debug).toContain("sentinel first-session debug log");
+		expect(logger.loggerLevel).toBe("error");
+	});
+
+	it("retains the session log level for a later ready callback", async ({
+		expect,
+	}) => {
+		logger.loggerLevel = "error";
+		let resolveReady:
+			| ((value: { url: URL }) => void)
+			| undefined;
+		const readyPromise = new Promise<{ url: URL }>((resolve) => {
+			resolveReady = resolve;
+		});
+		mocks.fakeDevEnv.proxy.ready.promise = readyPromise;
+
+		await startDev({
+			disableDevRegistry: true,
+			showLocalExplorerAgentHint: true,
+			logLevel: "log",
+		} as StartDevOptions);
+		resolveReady?.({ url: new URL("http://127.0.0.1:8787") });
+		await readyPromise;
+		await Promise.resolve();
+
+		expect(std.out).toContain(
+			"Wrangler detected this dev session is running in an AI agent."
+		);
 		expect(logger.loggerLevel).toBe("error");
 	});
 
