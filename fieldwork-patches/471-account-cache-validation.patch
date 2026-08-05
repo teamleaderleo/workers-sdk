@@ -1,7 +1,7 @@
 diff --git a/packages/workers-auth/src/core/factory.ts b/packages/workers-auth/src/core/factory.ts
 --- a/packages/workers-auth/src/core/factory.ts
 +++ b/packages/workers-auth/src/core/factory.ts
-@@ -472,22 +472,27 @@ export function createCloudflareAuth(
+@@ -472,24 +472,29 @@ export function createCloudflareAuth(
 -	function getActiveAccountId(config: {
 +	function getExplicitAccountId(config: {
  		account_id?: string;
@@ -33,7 +33,7 @@ diff --git a/packages/workers-auth/src/core/factory.ts b/packages/workers-auth/s
  	}
  
  	async function getOrSelectAccountId(
-@@ -498,9 +503,18 @@ export function createCloudflareAuth(
+@@ -498,10 +503,19 @@ export function createCloudflareAuth(
  		// TODO: v5 we should prioritise the env var instead of the config value here,
  		// for consistency with other env vars.
 -		const activeAccountId = getActiveAccountId(config);
