@@ -11,7 +11,7 @@ import { MultiworkerRuntimeController } from "../api/startDevWorker/MultiworkerR
 import { NoOpProxyController } from "../api/startDevWorker/NoOpProxyController";
 import { validateNodeCompatMode } from "../deployment-bundle/node-compat";
 import registerDevHotKeys from "../dev/hotkeys";
-import { logger } from "../logger";
+import { logger, runWithLogLevel } from "../logger";
 import { getSiteAssetPaths } from "../sites";
 import { TunnelManager } from "../tunnel/dev";
 import { requireApiToken, requireAuth } from "../user";
@@ -29,40 +29,41 @@ import type { Config } from "@cloudflare/workers-utils";
 /**
  * Starts one (primary) or more (secondary) DevEnv environments given the `args`.
  */
-export async function startDev(args: StartDevOptions) {
+export function startDev(args: StartDevOptions) {
+	return runWithLogLevel(args.logLevel, () => startDevInLogScope(args));
+}
+
+async function startDevInLogScope(args: StartDevOptions) {
 	let devEnv: DevEnv | DevEnv[] | undefined;
 	let tunnelManager: TunnelManager | undefined;
 	let unregisterHotKeys: (() => void) | undefined;
 	try {
-		if (args.logLevel) {
-			logger.loggerLevel = args.logLevel;
-		}
-
-		const authHook: AsyncHook<CfAccount, [Pick<Config, "account_id">]> = async (
+		const authHook: AsyncHook<CfAccount, [Pick<Config, "account_id">]> = (
 			config
-		) => {
-			const hotkeysDisplayed = !!unregisterHotKeys;
-			let accountId = args.accountId;
-			if (!accountId) {
-				unregisterHotKeys?.();
-				accountId = await requireAuth(config);
-				if (hotkeysDisplayed) {
-					assert(devEnv !== undefined);
-					unregisterHotKeys = registerDevHotKeys(
-						Array.isArray(devEnv) ? devEnv : [devEnv],
-						args,
-						{
-							tunnelManager,
-							render: false,
-						}
-					);
+		) =>
+			runWithLogLevel(args.logLevel, async () => {
+				const hotkeysDisplayed = !!unregisterHotKeys;
+				let accountId = args.accountId;
+				if (!accountId) {
+					unregisterHotKeys?.();
+					accountId = await requireAuth(config);
+					if (hotkeysDisplayed) {
+						assert(devEnv !== undefined);
+						unregisterHotKeys = registerDevHotKeys(
+							Array.isArray(devEnv) ? devEnv : [devEnv],
+							args,
+							{
+								tunnelManager,
+								render: false,
+							}
+						);
+					}
 				}
-			}
-			return {
-				accountId,
-				apiToken: requireApiToken(),
-			};
-		};
+				return {
+					accountId,
+					apiToken: requireApiToken(),
+				};
+			});
 
 		if (args.remote) {
 			logger.log(
@@ -103,6 +104,7 @@ export async function startDev(args: StartDevOptions) {
 						return setupDevEnv(auxDevEnv, c, authHook, {
 							env: args.env,
 							disableDevRegistry: args.disableDevRegistry,
+							logLevel: args.logLevel,
 							multiworkerPrimary: false,
 						});
 					})
@@ -120,7 +122,9 @@ export async function startDev(args: StartDevOptions) {
 		tunnelManager = new TunnelManager(primaryDevEnv, args);
 
 		primaryDevEnv.on("teardown", () => {
-			tunnelManager?.getTunnel()?.dispose();
+			runWithLogLevel(args.logLevel, () => {
+				tunnelManager?.getTunnel()?.dispose();
+			});
 		});
 
 		const interactiveDevSession =
@@ -131,37 +135,40 @@ export async function startDev(args: StartDevOptions) {
 		}
 
 		// The ProxyWorker will have a stable host and port, so only listen for the first update
-		void primaryDevEnv.proxy.ready.promise.then(({ url }) => {
-			if (args.onReady) {
-				args.onReady(url.hostname, parseInt(url.port));
-			}
+		void primaryDevEnv.proxy.ready.promise.then(({ url }) =>
+			runWithLogLevel(args.logLevel, () => {
+				if (args.onReady) {
+					args.onReady(url.hostname, parseInt(url.port));
+				}
 
-			if (
-				(args.enableIpc || !args.onReady) &&
-				process.send &&
-				typeof vitest === "undefined"
-			) {
-				process.send(
-					JSON.stringify({
-						event: "DEV_SERVER_READY",
-						ip: url.hostname,
-						port: parseInt(url.port),
-					})
+				if (
+					(args.enableIpc || !args.onReady) &&
+					process.send &&
+					typeof vitest === "undefined"
+				) {
+					process.send(
+						JSON.stringify({
+							event: "DEV_SERVER_READY",
+							ip: url.hostname,
+							port: parseInt(url.port),
+						})
+					);
+				}
+
+				// Print scheduled worker warning with the actual public URL
+				const allDevEnvs = [primaryDevEnv, ...secondary];
+				const hasCrons = allDevEnvs.some(
+					(env) =>
+						env.config.latestConfig?.triggers?.some(
+							(t) => t.type === "cron"
+						) ?? false
 				);
-			}
-
-			// Print scheduled worker warning with the actual public URL
-			const allDevEnvs = [primaryDevEnv, ...secondary];
-			const hasCrons = allDevEnvs.some(
-				(env) =>
-					env.config.latestConfig?.triggers?.some((t) => t.type === "cron") ??
-					false
-			);
-			maybePrintScheduledWorkerWarning(hasCrons, !!args.testScheduled, url);
-			if (args.showLocalExplorerAgentHint) {
-				printLocalExplorerAgentHint(url);
-			}
-		});
+				maybePrintScheduledWorkerWarning(hasCrons, !!args.testScheduled, url);
+				if (args.showLocalExplorerAgentHint) {
+					printLocalExplorerAgentHint(url);
+				}
+			})
+		);
 
 		// Start tunnel early, before the proxy is ready.
 		// The port is already resolved by ConfigController, so we can build the
@@ -360,9 +367,12 @@ function maybePrintScheduledWorkerWarning(
 	const port = url.port;
 
 	logger.once.warn(
-		`Scheduled Workers are not automatically triggered during local development.\n` +
-			`To manually trigger a scheduled event, run:\n` +
-			`  curl "http://${host}:${port}/cdn-cgi/local/scheduled"\n` +
+		`Scheduled Workers are not automatically triggered during local development.\
+` +
+			`To manually trigger a scheduled event, run:\
+` +
+			`  curl "http://${host}:${port}/cdn-cgi/local/scheduled"\
+` +
 			`For more details, see https://developers.cloudflare.com/workers/configuration/cron-triggers/#test-cron-triggers-locally`
 	);
 }
@@ -382,7 +392,7 @@ function printLocalExplorerAgentHint(url: URL): void {
 		  GET ${explorerApiUrl}/workers/durable_objects/namespaces - Durable Object namespaces
 		  GET ${explorerApiUrl}/workflows - Workflows
 		  POST ${explorerApiUrl}/local/observability/query - run a read-only SQL query (SELECT/WITH only) over captured request traces and console logs. Tables: spans, logs (read attributes via json(attributes)). Example:
-		    curl -X POST ${explorerApiUrl}/local/observability/query -H 'Content-Type: application/json' -d '{"sql":"SELECT service, name, outcome, duration_ms FROM spans WHERE parent_id IS NULL LIMIT 20"}'
+		    curl -X POST ${explorerApiUrl}/local/observability/query -H 'Content-Type: application/json' -d '{"sql":"SELECT service, name, outcome, duration_ms FROM spans WHERE parent_id IS NULL LIMIT 20"}'`
 		If the routes above don't cover what you need, fetch the full OpenAPI schema (large - use only as a last resort):
 		  GET ${explorerApiUrl} - OpenAPI schema`);
 }
