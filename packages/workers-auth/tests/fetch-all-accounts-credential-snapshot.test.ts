@@ -22,13 +22,25 @@ function createLogger(): AuthContext["logger"] {
 	} as unknown as AuthContext["logger"];
 }
 
+function restoreEnv(name: string, value: string | undefined): void {
+	if (value === undefined) {
+		delete process.env[name];
+	} else {
+		process.env[name] = value;
+	}
+}
+
 describe("fetchAllAccounts credential ownership", () => {
 	let configDir: string;
 	let originalApiToken: string | undefined;
+	let originalApiKey: string | undefined;
+	let originalEmail: string | undefined;
 
 	beforeEach(() => {
 		configDir = mkdtempSync(join(tmpdir(), "workers-auth-snapshot-"));
 		originalApiToken = process.env.CLOUDFLARE_API_TOKEN;
+		originalApiKey = process.env.CLOUDFLARE_API_KEY;
+		originalEmail = process.env.CLOUDFLARE_EMAIL;
 		process.env.CLOUDFLARE_API_TOKEN = "active-environment-token";
 		delete process.env.CLOUDFLARE_API_KEY;
 		delete process.env.CLOUDFLARE_EMAIL;
@@ -36,11 +48,9 @@ describe("fetchAllAccounts credential ownership", () => {
 	});
 
 	afterEach(() => {
-		if (originalApiToken === undefined) {
-			delete process.env.CLOUDFLARE_API_TOKEN;
-		} else {
-			process.env.CLOUDFLARE_API_TOKEN = originalApiToken;
-		}
+		restoreEnv("CLOUDFLARE_API_TOKEN", originalApiToken);
+		restoreEnv("CLOUDFLARE_API_KEY", originalApiKey);
+		restoreEnv("CLOUDFLARE_EMAIL", originalEmail);
 		rmSync(configDir, { recursive: true, force: true });
 	});
 
