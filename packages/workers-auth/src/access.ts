@@ -45,17 +45,16 @@ export async function domainUsesAccess(
 		return usesAccessCache.get(domain) ?? false;
 	}
 	logger.debug("Access switch not cached for:", domain);
-	try {
-		const controller = new AbortController();
-		const cancel = setTimeout(() => {
-			controller.abort();
-		}, 1000);
+	const controller = new AbortController();
+	const cancel = setTimeout(() => {
+		controller.abort();
+	}, 1000);
 
+	try {
 		const output = await fetch(`https://${domain}`, {
 			redirect: "manual",
 			signal: controller.signal,
 		});
-		clearTimeout(cancel);
 		const usesAccess = !!(
 			output.status === 302 &&
 			output.headers.get("location")?.includes("cloudflareaccess.com")
@@ -65,8 +64,11 @@ export async function domainUsesAccess(
 		usesAccessCache.set(domain, usesAccess);
 		return usesAccess;
 	} catch {
-		usesAccessCache.set(domain, false);
+		// A failed probe is not evidence that the domain is not behind Access.
+		// Leave the result uncached so a later operation can retry.
 		return false;
+	} finally {
+		clearTimeout(cancel);
 	}
 }
 
@@ -110,12 +112,12 @@ export async function getAccessHeaders(
 
 	if (clientId && clientSecret) {
 		logger.debug("Using Access Service Token headers for domain:", domain);
-		const headers = {
+		// Service-token credentials are environment-owned and can rotate or be
+		// removed between operations. Construct them for this call only.
+		return {
 			"CF-Access-Client-Id": clientId,
 			"CF-Access-Client-Secret": clientSecret,
 		};
-		headersCache[domain] = headers;
-		return headers;
 	}
 
 	// Warn if only one of the two env vars is set
