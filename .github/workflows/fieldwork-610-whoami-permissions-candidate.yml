@@ -18,13 +18,15 @@ permissions:
 jobs:
   whoami-permissions:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
       - name: Verify exact evidence parent
-        run: test "$(git rev-parse HEAD^1)" = "e69097d0639396749f99525862a0d44eddadf05e"
+        run: test "$(git rev-parse HEAD^1)" = "20e74511ca42f36d812fa33b0a2828047841b0ed"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.1
@@ -43,12 +45,14 @@ jobs:
           pnpm exec oxfmt --check \
             packages/wrangler/src/user/whoami.ts \
             packages/wrangler/src/__tests__/whoami-active-token-permissions.test.ts
+      - name: Build Wrangler with workspace dependencies
+        run: pnpm run build --filter=wrangler...
       - name: Run focused whoami regression
         run: |
           pnpm --filter wrangler test:ci -- \
             whoami-active-token-permissions.test.ts
-      - name: Typecheck Wrangler
-        run: pnpm --filter wrangler check:type
+      - name: Typecheck Wrangler with workspace dependencies
+        run: pnpm run check:type --filter=wrangler...
       - name: Verify exact source fence
         run: |
           git diff --check
