@@ -19,13 +19,15 @@ permissions:
 jobs:
   account-cache-revalidation:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 55
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
       - name: Verify exact evidence parent
-        run: test "$(git rev-parse HEAD^1)" = "dfffb0b48cc6aea50d1975a8fab0b073d42bfa67"
+        run: test "$(git rev-parse HEAD^1)" = "8d759fe13b1ebb5050dda6d20355c879817d9ea4"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.1
@@ -33,14 +35,18 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Require focused baseline to lose
+      - name: Build baseline with workspace dependencies
+        run: pnpm run build --filter=wrangler...
+      - name: Require focused baseline assertion failure
         run: |
           set +e
-          pnpm --filter wrangler exec vitest run \
-            src/__tests__/account-cache-credential-authority.test.ts
-          status=$?
+          FORCE_COLOR=0 pnpm --filter wrangler exec vitest run \
+            src/__tests__/account-cache-credential-authority.test.ts 2>&1 | tee baseline.log
+          status=${PIPESTATUS[0]}
           set -e
           test "$status" -ne 0
+          grep -F "AssertionError" baseline.log
+          ! grep -F "Failed Suites" baseline.log
       - name: Apply retained candidate with zero fuzz
         run: |
           git apply --check --whitespace=error-all \
@@ -52,12 +58,10 @@ jobs:
           pnpm exec oxfmt --check \
             packages/workers-auth/src/core/factory.ts \
             packages/wrangler/src/__tests__/account-cache-credential-authority.test.ts
-      - name: Build workers-auth
-        run: pnpm --filter @cloudflare/workers-auth build
-      - name: Typecheck workers-auth and Wrangler
-        run: |
-          pnpm --filter @cloudflare/workers-auth check:type
-          pnpm --filter wrangler check:type
+      - name: Build candidate with workspace dependencies
+        run: pnpm run build --filter=wrangler...
+      - name: Typecheck candidate with workspace dependencies
+        run: pnpm run check:type --filter=wrangler...
       - name: Require focused candidate to pass
         run: |
           pnpm --filter wrangler exec vitest run \
