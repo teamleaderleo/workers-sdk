@@ -159,9 +159,8 @@ async function startDevInLogScope(args: StartDevOptions) {
 				const allDevEnvs = [primaryDevEnv, ...secondary];
 				const hasCrons = allDevEnvs.some(
 					(env) =>
-						env.config.latestConfig?.triggers?.some(
-							(t) => t.type === "cron"
-						) ?? false
+						env.config.latestConfig?.triggers?.some((t) => t.type === "cron") ??
+						false
 				);
 				maybePrintScheduledWorkerWarning(hasCrons, !!args.testScheduled, url);
 				if (args.showLocalExplorerAgentHint) {

@@ -176,9 +176,7 @@ describe("startDev", () => {
 		expect,
 	}) => {
 		logger.loggerLevel = "error";
-		let resolveReady:
-			| ((value: { url: URL }) => void)
-			| undefined;
+		let resolveReady: ((value: { url: URL }) => void) | undefined;
 		const readyPromise = new Promise<{ url: URL }>((resolve) => {
 			resolveReady = resolve;
 		});
