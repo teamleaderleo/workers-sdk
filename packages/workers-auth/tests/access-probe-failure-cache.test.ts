@@ -71,7 +71,9 @@ describe("Access detection cache", () => {
 		expect(probes).toBe(1);
 	});
 
-	it("continues caching definitive Access-positive probes", async ({ expect }) => {
+	it("continues caching definitive Access-positive probes", async ({
+		expect,
+	}) => {
 		let probes = 0;
 		msw.use(
 			http.get("https://access-probe-positive.com/", () => {
