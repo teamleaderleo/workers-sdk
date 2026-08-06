@@ -1,12 +1,13 @@
 import { generateContainerBuildId } from "@cloudflare/containers-shared";
 import { openInBrowser } from "@cloudflare/workers-utils";
 import { CorePaths } from "miniflare";
+import { runInDevEnvLogScope } from "../api/startDevWorker/DevEnv";
 import { LocalRuntimeController } from "../api/startDevWorker/LocalRuntimeController";
 import registerHotKeys from "../cli-hotkeys";
 import { logger } from "../logger";
 import { debounce } from "../utils/debounce";
 import { openInspector } from "./inspect";
-import type { DevEnv } from "../api";
+import type { DevEnv } from "../api/startDevWorker/DevEnv";
 import type { TunnelManager } from "../tunnel/dev";
 
 export default function registerDevHotKeys(
@@ -84,8 +85,8 @@ export default function registerDevHotKeys(
 								}
 							}
 						});
-						// cleanup any existing containers
 
+						// cleanup any existing containers
 						devEnv.runtimes.map((runtime) => {
 							if (runtime instanceof LocalRuntimeController) {
 								runtime.cleanupContainers();
@@ -180,7 +181,8 @@ export default function registerDevHotKeys(
 				},
 			},
 		],
-		render
+		render,
+		(callback) => runInDevEnvLogScope(primaryDevEnv, callback)
 	);
 
 	return unregisterHotKeys;
