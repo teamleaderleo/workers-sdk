@@ -1,8 +1,7 @@
 diff --git a/packages/workers-auth/src/access.ts b/packages/workers-auth/src/access.ts
 --- a/packages/workers-auth/src/access.ts
 +++ b/packages/workers-auth/src/access.ts
-@@ -43,13 +43,13 @@ export async function domainUsesAccess(
- 	}
+@@ -47,24 +47,23 @@
  	logger.debug("Access switch not cached for:", domain);
 +	const controller = new AbortController();
 +	const cancel = setTimeout(() => {
@@ -22,7 +21,9 @@ diff --git a/packages/workers-auth/src/access.ts b/packages/workers-auth/src/acc
  		const usesAccess = !!(
  			output.status === 302 &&
  			output.headers.get("location")?.includes("cloudflareaccess.com")
-@@ -60,8 +60,9 @@ export async function domainUsesAccess(
+ 		);
+ 		logger.debug("Caching access switch for:", domain);
+ 
  		usesAccessCache.set(domain, usesAccess);
  		return usesAccess;
  	} catch {
@@ -31,4 +32,3 @@ diff --git a/packages/workers-auth/src/access.ts b/packages/workers-auth/src/acc
 +	} finally {
 +		clearTimeout(cancel);
  	}
- }
