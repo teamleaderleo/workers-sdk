@@ -34,8 +34,11 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Check committed regression formatting
-        run: pnpm exec oxfmt --check packages/workers-auth/tests/access-probe-failure-cache.test.ts
+      - name: Show required regression formatting
+        run: |
+          pnpm exec oxfmt packages/workers-auth/tests/access-probe-failure-cache.test.ts
+          git diff -- packages/workers-auth/tests/access-probe-failure-cache.test.ts
+          test -z "$(git status --porcelain -- packages/workers-auth/tests/access-probe-failure-cache.test.ts)"
       - name: Build baseline with workspace dependencies
         run: pnpm run build --filter=@cloudflare/workers-auth...
       - name: Require focused baseline assertion failure
