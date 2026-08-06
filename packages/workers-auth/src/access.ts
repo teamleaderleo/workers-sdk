@@ -45,17 +45,15 @@ export async function domainUsesAccess(
 		return usesAccessCache.get(domain) ?? false;
 	}
 	logger.debug("Access switch not cached for:", domain);
+	const controller = new AbortController();
+	const cancel = setTimeout(() => {
+		controller.abort();
+	}, 1000);
 	try {
-		const controller = new AbortController();
-		const cancel = setTimeout(() => {
-			controller.abort();
-		}, 1000);
-
 		const output = await fetch(`https://${domain}`, {
 			redirect: "manual",
 			signal: controller.signal,
 		});
-		clearTimeout(cancel);
 		const usesAccess = !!(
 			output.status === 302 &&
 			output.headers.get("location")?.includes("cloudflareaccess.com")
@@ -65,8 +63,9 @@ export async function domainUsesAccess(
 		usesAccessCache.set(domain, usesAccess);
 		return usesAccess;
 	} catch {
-		usesAccessCache.set(domain, false);
 		return false;
+	} finally {
+		clearTimeout(cancel);
 	}
 }
 
