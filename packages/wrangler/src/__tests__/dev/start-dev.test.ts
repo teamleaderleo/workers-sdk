@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { beforeEach, describe, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import registerDevHotKeys from "../../dev/hotkeys";
 import { startDev } from "../../dev/start-dev";
 import { logger } from "../../logger";
@@ -50,8 +50,13 @@ describe("startDev", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		logger.clearHistory();
+		logger.resetLoggerLevel();
 		mocks.configSet.mockResolvedValue(undefined);
 		mocks.fakeDevEnv.proxy.ready.promise = new Promise(() => {});
+	});
+
+	afterEach(() => {
+		logger.resetLoggerLevel();
 	});
 
 	it("unregisters the latest hotkey registration after auth re-registers hotkeys", async ({
@@ -83,6 +88,73 @@ describe("startDev", () => {
 
 		expect(unregisterHotKeys[0]).toHaveBeenCalledOnce();
 		expect(unregisterHotKeys[1]).toHaveBeenCalledOnce();
+	});
+
+	it("leaves a failed dev session's log level on the singleton logger", async ({
+		expect,
+	}) => {
+		logger.loggerLevel = "log";
+		mocks.configSet.mockRejectedValueOnce(
+			new Error("sentinel startup failure")
+		);
+
+		await expect(
+			startDev({
+				disableDevRegistry: true,
+				showInteractiveDevSession: false,
+				logLevel: "error",
+			} as StartDevOptions)
+		).rejects.toThrow("sentinel startup failure");
+
+		expect(logger.loggerLevel).toBe("error");
+	});
+
+	it("leaves a stopped dev session's log level on the singleton logger", async ({
+		expect,
+	}) => {
+		logger.loggerLevel = "log";
+
+		const result = await startDev({
+			disableDevRegistry: true,
+			showInteractiveDevSession: false,
+			logLevel: "debug",
+		} as StartDevOptions);
+		await result.devEnv.teardown();
+
+		expect(logger.loggerLevel).toBe("debug");
+	});
+
+	it("lets a later overlapping dev session replace the earlier session's log level", async ({
+		expect,
+	}) => {
+		let releaseFirstSetup: (() => void) | undefined;
+		const firstSetup = new Promise<void>((resolve) => {
+			releaseFirstSetup = resolve;
+		});
+		mocks.configSet
+			.mockImplementationOnce(() => firstSetup)
+			.mockResolvedValueOnce(undefined);
+
+		const firstSession = startDev({
+			disableDevRegistry: true,
+			showInteractiveDevSession: false,
+			logLevel: "debug",
+		} as StartDevOptions);
+		await vi.waitFor(() => {
+			expect(mocks.configSet).toHaveBeenCalledTimes(1);
+		});
+
+		await startDev({
+			disableDevRegistry: true,
+			showInteractiveDevSession: false,
+			logLevel: "error",
+		} as StartDevOptions);
+		expect(logger.loggerLevel).toBe("error");
+
+		releaseFirstSetup?.();
+		await firstSession;
+
+		expect(logger.loggerLevel).toBe("error");
 	});
 
 	it("prints the Local Explorer API hint when the caller asks for it", async ({
