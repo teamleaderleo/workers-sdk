@@ -8,7 +8,7 @@ diff --git a/packages/workers-auth/src/flow.ts b/packages/workers-auth/src/flow.
 +import { getRevokeUrlFromEnv, getTokenUrlFromEnv } from "./env-vars";
  import { generateAuthUrl as defaultGenerateAuthUrl } from "./generate-auth-url";
  import { generateRandomState as defaultGenerateRandomState } from "./generate-random-state";
-@@ -205,5 +205,6 @@ export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
+@@ -205,6 +205,7 @@ export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
  		generateRandomState: ctx.generateRandomState ?? defaultGenerateRandomState,
  	};
  
@@ -16,7 +16,7 @@ diff --git a/packages/workers-auth/src/flow.ts b/packages/workers-auth/src/flow.
 +	const refreshes = new Map<string, Promise<boolean>>();
  
  	function getStorage(profile?: string): AuthConfigStorage {
-@@ -298,39 +299,64 @@ export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
+@@ -298,40 +299,65 @@ export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
 -	async function refreshToken(profile?: string): Promise<boolean> {
 +	async function performTokenRefresh(
 +		storage: AuthConfigStorage,
@@ -106,7 +106,7 @@ diff --git a/packages/workers-auth/src/core/factory.ts b/packages/workers-auth/s
 -		const credentials = requireApiToken();
 -
  		const results: ResponseType[] = [];
-@@ -403,10 +395,23 @@ export function createCloudflareAuth(
+@@ -403,11 +395,24 @@ export function createCloudflareAuth(
  		options: { throwOnEmpty?: boolean } = {}
  	): Promise<Account[]> {
  		const { throwOnEmpty = true } = options;
