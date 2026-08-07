@@ -769,14 +769,26 @@ function normalizeAndValidateDev(
 	validateAdditionalProperties(diagnostics, "dev", Object.keys(rest), []);
 
 	validateOptionalProperty(diagnostics, "dev", "ip", ip, "string");
-	validateOptionalProperty(diagnostics, "dev", "port", port, "number");
-	validateOptionalProperty(
-		diagnostics,
-		"dev",
-		"inspector_port",
-		inspector_port,
-		"number"
-	);
+	if (
+		validateOptionalProperty(diagnostics, "dev", "port", port, "number") &&
+		port !== undefined &&
+		!Number.isFinite(port)
+	) {
+		diagnostics.errors.push(`"dev.port" must be a finite number.`);
+	}
+	if (
+		validateOptionalProperty(
+			diagnostics,
+			"dev",
+			"inspector_port",
+			inspector_port,
+			"number"
+		) &&
+		inspector_port !== undefined &&
+		!Number.isFinite(inspector_port)
+	) {
+		diagnostics.errors.push(`"dev.inspector_port" must be a finite number.`);
+	}
 	validateOptionalProperty(
 		diagnostics,
 		"dev",
