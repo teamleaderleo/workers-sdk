@@ -1,9 +1,7 @@
 name: Fieldwork observability NaN repair
 
 on:
-  push:
-    branches:
-      - fieldwork/665-observability-nan-repro
+  pull_request:
 
 permissions:
   contents: write
