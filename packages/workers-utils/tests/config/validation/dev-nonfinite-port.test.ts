@@ -1,5 +1,5 @@
 import TOML from "smol-toml";
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { normalizeAndValidateConfig } from "../../../src/config/validation";
 import type { RawConfig } from "../../../src/config";
 
@@ -17,7 +17,7 @@ describe("dev non-finite numeric configuration", () => {
 		["-inf", "negative infinity"],
 	] as const)(
 		"currently accepts TOML %s for dev.port",
-		(literal, expectedKind, { expect }) => {
+		(literal, expectedKind) => {
 			const { config, diagnostics } = validateToml(`
 				[dev]
 				port = ${literal}
@@ -38,7 +38,7 @@ describe("dev non-finite numeric configuration", () => {
 
 	it.each(["nan", "+inf", "-inf"])(
 		"currently accepts TOML %s for dev.inspector_port",
-		(literal, { expect }) => {
+		(literal) => {
 			const { config, diagnostics } = validateToml(`
 				[dev]
 				inspector_port = ${literal}
@@ -50,7 +50,7 @@ describe("dev non-finite numeric configuration", () => {
 		}
 	);
 
-	it("continues accepting ordinary finite dev ports", ({ expect }) => {
+	it("continues accepting ordinary finite dev ports", () => {
 		const { config, diagnostics } = validateToml(`
 			[dev]
 			port = 8787
@@ -62,7 +62,7 @@ describe("dev non-finite numeric configuration", () => {
 		expect(diagnostics.hasErrors()).toBe(false);
 	});
 
-	it("retains the existing wrong-type diagnostic", ({ expect }) => {
+	it("retains the existing wrong-type diagnostic", () => {
 		const { diagnostics } = validateToml(`
 			[dev]
 			port = "8787"
