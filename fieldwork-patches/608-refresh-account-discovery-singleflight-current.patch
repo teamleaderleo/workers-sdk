@@ -1,9 +1,10 @@
 diff --git a/packages/workers-auth/src/flow.ts b/packages/workers-auth/src/flow.ts
 --- a/packages/workers-auth/src/flow.ts
 +++ b/packages/workers-auth/src/flow.ts
-@@ -7,5 +7,5 @@ import { fetch } from "undici";
+@@ -7,6 +7,6 @@ import { fetch } from "undici";
  import { getOauthToken } from "./callback-server";
  import { getAPIToken, requireApiToken } from "./credentials";
+ import { getOauthTokenViaDeviceFlow } from "./device-flow";
 -import { getRevokeUrlFromEnv } from "./env-vars";
 +import { getRevokeUrlFromEnv, getTokenUrlFromEnv } from "./env-vars";
  import { generateAuthUrl as defaultGenerateAuthUrl } from "./generate-auth-url";
