@@ -1,0 +1,37 @@
+name: Fieldwork 530 Dev Test Classification
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dev-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 2
+      - name: Verify exact source parent
+        run: test "$(git rev-parse HEAD^1)" = "b23670b3f990fc9f205fa373b3043e89a9197628"
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '22.23.1'
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install dependencies
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: pnpm install --frozen-lockfile
+      - name: Build Wrangler dependency closure
+        run: pnpm run build --filter=wrangler...
+      - name: Run broad-dev failing file directly
+        run: pnpm --filter wrangler exec vitest run src/__tests__/dev.test.ts
+      - name: Run log-scope owned controls directly
+        run: |
+          pnpm --filter wrangler exec vitest run \
+            src/__tests__/dev/start-dev.test.ts \
+            src/__tests__/dev/log-level-session-scope.test.ts
+      - name: Verify carrier-only fence
+        run: test "$(git diff --name-only HEAD^1 HEAD)" = '.github/workflows/fieldwork-530-dev-test-classification.yml'
