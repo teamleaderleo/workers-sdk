@@ -6547,7 +6547,10 @@ function validateHeadSamplingRate(
 	key: string,
 	samplingRate: number | undefined
 ) {
-	if (samplingRate && (samplingRate < 0 || samplingRate > 1)) {
+	if (
+		samplingRate !== undefined &&
+		(Number.isNaN(samplingRate) || samplingRate < 0 || samplingRate > 1)
+	) {
 		diagnostics.errors.push(
 			`"${container}.${key}" must be a value between 0 and 1.`
 		);
