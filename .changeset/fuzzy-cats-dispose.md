@@ -2,4 +2,4 @@
 "miniflare": patch
 ---
 
-Dispose the workerd runtime before awaiting other teardown hooks.
+Request workerd termination before independent teardown and wait for runtime exit before disposal settles.
