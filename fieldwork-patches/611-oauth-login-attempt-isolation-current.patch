@@ -1,7 +1,7 @@
 diff --git a/packages/workers-auth/src/flow.ts b/packages/workers-auth/src/flow.ts
 --- a/packages/workers-auth/src/flow.ts
 +++ b/packages/workers-auth/src/flow.ts
-@@ -210,6 +210,5 @@
+@@ -210,7 +210,6 @@
  export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
 -	const oauthFlowState: OAuthFlowState = {};
  	const generators = {
