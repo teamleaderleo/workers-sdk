@@ -1,0 +1,120 @@
+name: Fieldwork 456 Miniflare runtime order before/after
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fieldwork-456-runtime-order-before-after.yml"
+      - "fieldwork-tests/456-runtime-order-before-after.spec.ts"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASELINE_HEAD: 99eb50ce1d3420a50ae0e95958bf49d65874706e
+  CANDIDATE_HEAD: 0eae5d63cc2a7f2cae7b91b89d533ecb271cc373
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  before-after:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out proof carrier
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify proof carrier fence
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=$(printf '%s\n' \
+            .github/workflows/fieldwork-456-runtime-order-before-after.yml \
+            fieldwork-tests/456-runtime-order-before-after.spec.ts | sort)
+          actual=$(git diff --name-only "$BASELINE_HEAD"...HEAD | sort)
+          test "$actual" = "$expected"
+          git diff --check "$BASELINE_HEAD"...HEAD
+          cp fieldwork-tests/456-runtime-order-before-after.spec.ts \
+            "$RUNNER_TEMP/456-runtime-order-before-after.spec.ts"
+
+      - name: Set up repository Node version
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.1
+
+      - name: Prepare exact baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$BASELINE_HEAD"
+          cp "$RUNNER_TEMP/456-runtime-order-before-after.spec.ts" \
+            packages/miniflare/test/fieldwork-456-runtime-order-before-after.spec.ts
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm exec oxfmt --check \
+            packages/miniflare/test/fieldwork-456-runtime-order-before-after.spec.ts
+          pnpm --filter=miniflare... build
+
+      - name: Run baseline proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fieldwork-456-receipt"
+          FIELDWORK_EXPECT_KILL_BEFORE_PROXY_RELEASE=0 \
+            pnpm --filter miniflare exec vitest run \
+              test/fieldwork-456-runtime-order-before-after.spec.ts \
+              2>&1 | tee "$RUNNER_TEMP/fieldwork-456-receipt/baseline.log"
+
+      - name: Prepare exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f packages/miniflare/test/fieldwork-456-runtime-order-before-after.spec.ts
+          git checkout --detach "$CANDIDATE_HEAD"
+          cp "$RUNNER_TEMP/456-runtime-order-before-after.spec.ts" \
+            packages/miniflare/test/fieldwork-456-runtime-order-before-after.spec.ts
+          pnpm exec oxfmt --check \
+            packages/miniflare/test/fieldwork-456-runtime-order-before-after.spec.ts
+          pnpm --filter=miniflare... build
+
+      - name: Run candidate proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIELDWORK_EXPECT_KILL_BEFORE_PROXY_RELEASE=1 \
+            pnpm --filter miniflare exec vitest run \
+              test/fieldwork-456-runtime-order-before-after.spec.ts \
+              2>&1 | tee "$RUNNER_TEMP/fieldwork-456-receipt/candidate.log"
+
+      - name: Write before/after summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Miniflare runtime shutdown ordering'
+            echo
+            echo '**Baseline** — proxy cleanup held for 1 second; workerd should still be alive and no SIGKILL should have been requested.'
+            echo '```text'
+            grep -F '[fieldwork-456]' "$RUNNER_TEMP/fieldwork-456-receipt/baseline.log" || true
+            echo '```'
+            echo
+            echo '**Candidate** — with the same proxy cleanup hold, workerd termination should already have been requested.'
+            echo '```text'
+            grep -F '[fieldwork-456]' "$RUNNER_TEMP/fieldwork-456-receipt/candidate.log" || true
+            echo '```'
+            echo
+            echo "Baseline: $BASELINE_HEAD"
+            echo "Candidate: $CANDIDATE_HEAD"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload proof receipt
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: fieldwork-456-runtime-order-before-after
+          path: ${{ runner.temp }}/fieldwork-456-receipt/
+          if-no-files-found: warn
+          retention-days: 30
