@@ -3354,17 +3354,51 @@ export class Miniflare {
 		// Note `dispose()`ing the `#proxyClient` implicitly poison's proxies, but
 		// we'd like them to be poisoned synchronously here.
 		this.#proxyClient?.poisonProxies();
+		let waitForReadyFailed = false;
+		let waitForReadyError: unknown;
 		try {
 			await this.#waitForReady(/* disposing */ true);
-		} finally {
-			await this.#closeBrowserProcesses();
+		} catch (error) {
+			waitForReadyFailed = true;
+			waitForReadyError = error;
+		}
 
-			// Remove exit hook, we're cleaning up what they would've cleaned up now
-			this.#removeExitHook?.();
+		// Remove exit hook, we're cleaning up what they would've cleaned up now
+		this.#removeExitHook?.();
 
-			// Cleanup as much as possible even if `#init()` threw
-			await this.#proxyClient?.dispose();
-			await this.#runtime?.dispose();
+		try {
+			// Runtime.dispose() requests workerd termination synchronously before
+			// returning its child-exit promise. Start it before awaiting other cleanup
+			// so those hooks cannot delay or skip the termination request.
+			let runtimeDisposePromise: Promise<void>;
+			try {
+				runtimeDisposePromise = Promise.resolve(this.#runtime?.dispose());
+			} catch (error) {
+				runtimeDisposePromise = Promise.reject(error);
+			}
+			// Attach a rejection handler immediately so a fast runtime failure cannot
+			// become unhandled while independent cleanup is still pending.
+			const runtimeDisposeOutcome = runtimeDisposePromise.then(
+				() => ({ ok: true as const }),
+				(error: unknown) => ({ ok: false as const, error })
+			);
+
+			// Preserve the existing first cleanup error, but do not allow it to make
+			// the first dispose call return before the owned runtime exit settles.
+			let independentCleanupFailed = false;
+			let independentCleanupError: unknown;
+			try {
+				// Cleanup as much as possible even if `#init()` threw.
+				await this.#closeBrowserProcesses();
+				await this.#proxyClient?.dispose();
+			} catch (error) {
+				independentCleanupFailed = true;
+				independentCleanupError = error;
+			}
+
+			const runtimeCleanupOutcome = await runtimeDisposeOutcome;
+			if (independentCleanupFailed) throw independentCleanupError;
+			if (!runtimeCleanupOutcome.ok) throw runtimeCleanupOutcome.error;
 			// Close the undici Pool used for dispatching fetch requests to the
 			// runtime. This must happen after the runtime is disposed, so that
 			// in-flight connections are broken and close immediately. Without this,
@@ -3413,11 +3447,14 @@ export class Miniflare {
 
 			// shutdown hyperdrive proxies if any exist
 			await this.#hyperdriveProxyController.dispose();
-
-			// Remove from instance registry as last step in `finally`, to make sure
-			// all dispose steps complete
+		} finally {
+			// A disposal attempt is terminal for instance-registry bookkeeping even
+			// when a cleanup owner reports failure. The caller still receives that
+			// failure, but the instance was not left undisposed by the caller.
 			maybeInstanceRegistry?.delete(this);
 		}
+
+		if (waitForReadyFailed) throw waitForReadyError;
 	}
 }
 
