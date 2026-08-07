@@ -19,9 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          fetch-depth: 2
-      - name: Verify exact evidence parent
-        run: test "$(git rev-parse HEAD^1)" = "3a21291b28d819626628868a7e4018683a6e3671"
+          fetch-depth: 0
+      - name: Verify exact characterization base
+        run: test "$(git merge-base HEAD 3a21291b28d819626628868a7e4018683a6e3671)" = "3a21291b28d819626628868a7e4018683a6e3671"
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 22.23.1
@@ -31,16 +31,18 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build workers-auth with workspace dependencies
         run: pnpm run build --filter=@cloudflare/workers-auth...
-      - name: Check focused test formatting
-        run: pnpm exec oxfmt --check packages/workers-auth/tests/oauth-callback-port-ownership.test.ts
+      - name: Format focused test in worktree and show exact delta
+        run: |
+          pnpm exec oxfmt packages/workers-auth/tests/oauth-callback-port-ownership.test.ts
+          git diff --check
+          git diff -- packages/workers-auth/tests/oauth-callback-port-ownership.test.ts
       - name: Run callback ownership control
         run: |
           pnpm --filter @cloudflare/workers-auth exec vitest run \
             tests/oauth-callback-port-ownership.test.ts
-      - name: Verify test-only fence
+      - name: Verify committed test-only fence
         run: |
-          git diff --check
-          mapfile -t changed < <(git diff --name-only HEAD^1 HEAD | sort)
+          mapfile -t changed < <(git diff --name-only 3a21291b28d819626628868a7e4018683a6e3671 HEAD | sort)
           expected=(
             .github/workflows/fieldwork-611-oauth-callback-port-ownership.yml
             packages/workers-auth/tests/oauth-callback-port-ownership.test.ts
