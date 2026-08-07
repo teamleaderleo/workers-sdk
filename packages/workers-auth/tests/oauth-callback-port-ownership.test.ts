@@ -57,9 +57,7 @@ describe("OAuth callback port ownership", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("rejects a competing listener without disturbing the active attempt", async ({
-		expect,
-	}) => {
+	it("rejects a competing listener without disturbing the active attempt", async ({ expect }) => {
 		const port = await getFreePort();
 		const createServer = vi.spyOn(http, "createServer");
 		const options = {
@@ -91,13 +89,9 @@ describe("OAuth callback port ownership", () => {
 		await expect(second).rejects.toThrow("the port is already in use");
 		expect(firstServer.listening).toBe(true);
 
-		const response = await fetch(
-			`http://127.0.0.1:${port}/oauth/callback`
-		);
+		const response = await fetch(`http://127.0.0.1:${port}/oauth/callback`);
 		expect(response.status).toBe(400);
-		await expect(first).rejects.toThrow(
-			"did not return an authorisation code"
-		);
+		await expect(first).rejects.toThrow("did not return an authorisation code");
 		await vi.waitFor(() => expect(firstServer.listening).toBe(false));
 
 		const probe = net.createServer();
