@@ -210,7 +210,6 @@ export interface OAuthFlowAPI {
  * exactly one instance per process.
  */
 export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
-	const oauthFlowState: OAuthFlowState = {};
 	const generators = {
 		generateAuthUrl: ctx.generateAuthUrl ?? defaultGenerateAuthUrl,
 		generateRandomState: ctx.generateRandomState ?? defaultGenerateRandomState,
@@ -278,6 +277,7 @@ export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
 		} else {
 			ctx.logger.log("Attempting to login via OAuth...");
 
+			const oauthFlowState: OAuthFlowState = {};
 			oauth = await getOauthToken(
 				{
 					browser: props.browser ?? true,

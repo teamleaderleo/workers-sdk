@@ -1,0 +1,17 @@
+diff --git a/packages/workers-auth/src/flow.ts b/packages/workers-auth/src/flow.ts
+--- a/packages/workers-auth/src/flow.ts
++++ b/packages/workers-auth/src/flow.ts
+@@ -210,7 +210,6 @@
+ export function createOAuthFlow(ctx: OAuthFlowContext): OAuthFlowAPI {
+-	const oauthFlowState: OAuthFlowState = {};
+ 	const generators = {
+ 		generateAuthUrl: ctx.generateAuthUrl ?? defaultGenerateAuthUrl,
+ 		generateRandomState: ctx.generateRandomState ?? defaultGenerateRandomState,
+ 	};
+ 
+@@ -279,4 +278,5 @@
+ 		} else {
+ 			ctx.logger.log("Attempting to login via OAuth...");
+ 
++			const oauthFlowState: OAuthFlowState = {};
+ 			oauth = await getOauthToken(
