@@ -1,0 +1,146 @@
+name: Internal simplify Miniflare 55
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/internal-simplify-miniflare-55.yml
+
+permissions:
+  contents: write
+
+jobs:
+  simplify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out candidate branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: source/miniflare-runtime-settlement-clean
+          fetch-depth: 0
+
+      - name: Simplify disposal ordering
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/miniflare/src/index.ts")
+          text = path.read_text()
+          start = text.index("\tasync dispose(): Promise<void> {")
+          end_marker = "\n\t}\n}\n\nexport type { WorkerdStructuredLog }"
+          end = text.index(end_marker, start) + len("\n\t}")
+
+          method = r'''\tasync dispose(): Promise<void> {
+          \t\tthis.#disposeController.abort();
+          \t\t// The `ProxyServer` "heap" will be destroyed when `workerd` shuts down,
+          \t\t// invalidating all existing native references. Mark all proxies as invalid.
+          \t\t// Note `dispose()`ing the `#proxyClient` implicitly poison's proxies, but
+          \t\t// we'd like them to be poisoned synchronously here.
+          \t\tthis.#proxyClient?.poisonProxies();
+          \t\ttry {
+          \t\t\tawait this.#waitForReady(/* disposing */ true);
+          \t\t} finally {
+          \t\t\t// Runtime.dispose() requests workerd termination synchronously before
+          \t\t\t// returning its child-exit promise. Start it before awaiting independent
+          \t\t\t// cleanup so those hooks cannot delay or skip the termination request.
+          \t\t\tlet runtimeDisposePromise: Promise<void>;
+          \t\t\ttry {
+          \t\t\t\truntimeDisposePromise = Promise.resolve(this.#runtime?.dispose());
+          \t\t\t} catch (error) {
+          \t\t\t\truntimeDisposePromise = Promise.reject(error);
+          \t\t\t}
+          \t\t\t// Attach a rejection handler immediately so a fast runtime failure cannot
+          \t\t\t// become unhandled while independent cleanup is still pending.
+          \t\t\tconst runtimeDisposeOutcome = runtimeDisposePromise.then(
+          \t\t\t\t() => ({ ok: true as const }),
+          \t\t\t\t(error: unknown) => ({ ok: false as const, error })
+          \t\t\t);
+
+          \t\t\ttry {
+          \t\t\t\tawait this.#closeBrowserProcesses();
+
+          \t\t\t\t// Remove exit hook, we're cleaning up what they would've cleaned up now
+          \t\t\t\tthis.#removeExitHook?.();
+
+          \t\t\t\t// Cleanup as much as possible even if `#init()` threw
+          \t\t\t\tawait this.#proxyClient?.dispose();
+          \t\t\t} catch (error) {
+          \t\t\t\t// Preserve the existing independent cleanup error, but only after the
+          \t\t\t\t// already-started runtime exit has settled.
+          \t\t\t\tawait runtimeDisposeOutcome;
+          \t\t\t\tthrow error;
+          \t\t\t}
+
+          \t\t\tconst runtimeCleanupOutcome = await runtimeDisposeOutcome;
+          \t\t\tif (!runtimeCleanupOutcome.ok) throw runtimeCleanupOutcome.error;
+          \t\t\t// Close the undici Pool used for dispatching fetch requests to the
+          \t\t\t// runtime. This must happen after the runtime is disposed, so that
+          \t\t\t// in-flight connections are broken and close immediately. Without this,
+          \t\t\t// lingering sockets in the Pool can keep the Node.js event loop alive.
+          \t\t\t// The Pool may already be destroyed (e.g., if workerd was SIGKILL'd and
+          \t\t\t// all connections broke), so ignore ClientDestroyedError.
+          \t\t\ttry {
+          \t\t\t\tawait this.#runtimeDispatcher?.close();
+          \t\t\t} catch {}
+          \t\t\t// Also close the dev-registry dispatcher (same issue as above).
+          \t\t\ttry {
+          \t\t\t\tawait this.#devRegistryDispatcher?.close();
+          \t\t\t} catch {}
+
+          \t\t\tawait this.#stopLoopbackServer();
+          \t\t\t// Close the WebSocket server so any connected clients are disconnected
+          \t\t\t// and their sockets don't keep the Node.js event loop alive. It uses
+          \t\t\t// `noServer: true` so it doesn't own an HTTP server, but connected
+          \t\t\t// WebSocket clients still hold open sockets.
+          \t\t\tthis.#webSocketServer.close();
+          \t\t\t// Best-effort cleanup: on Windows, workerd may not release file handles
+          \t\t\t// immediately after disposal, causing EBUSY errors. The temp directory
+          \t\t\t// lives in os.tmpdir() so the OS will clean it up eventually.
+          \t\t\tremoveDir(this.#tmpPath, { fireAndForget: true });
+          \t\t\t// Clean up email session directories in the project temp path. When no
+          \t\t\t// project temp path is supplied, these live inside `#tmpPath` and are
+          \t\t\t// already removed above.
+          \t\t\tconst emailPaths = getEmailPathsToClean(
+          \t\t\t\tthis.#sharedOpts.resourceTmpPath,
+          \t\t\t\tthis.#tmpPath
+          \t\t\t);
+          \t\t\tif (emailPaths) {
+          \t\t\t\ttry {
+          \t\t\t\t\tawait removeDir(emailPaths.sessionDir);
+          \t\t\t\t} catch (e) {
+          \t\t\t\t\tthis.#log.debug(
+          \t\t\t\t\t\t`Unable to remove email session directory: ${String(e)}`
+          \t\t\t\t\t);
+          \t\t\t\t}
+          \t\t\t}
+
+          \t\t\t// Close the inspector proxy server if there is one
+          \t\t\tawait this.#maybeInspectorProxyController?.dispose();
+          \t\t\t// Unregister workers from dev registry and stop the file watcher
+          \t\t\tawait this.#devRegistry.dispose();
+
+          \t\t\t// shutdown hyperdrive proxies if any exist
+          \t\t\tawait this.#hyperdriveProxyController.dispose();
+
+          \t\t\t// Remove from instance registry as last step in `finally`, to make sure
+          \t\t\t// all dispose steps complete
+          \t\t\tmaybeInstanceRegistry?.delete(this);
+          \t\t}
+          \t}'''.replace("\\t", "\t")
+
+          path.write_text(text[:start] + method + text[end:])
+          PY
+
+          git diff --check
+
+      - name: Commit simplified source
+        shell: bash
+        run: |
+          git config user.name "teamleaderleo"
+          git config user.email "13091533+teamleaderleo@users.noreply.github.com"
+          git add packages/miniflare/src/index.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "refactor(miniflare): simplify runtime settlement ordering"
+          git push origin HEAD:source/miniflare-runtime-settlement-clean
