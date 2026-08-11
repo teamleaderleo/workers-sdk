@@ -1,0 +1,33 @@
+name: Internal cleanup Miniflare 55
+
+on:
+  workflow_run:
+    workflows:
+      - Internal simplify Miniflare 55
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.event.workflow_run.id == 31491745575
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out fork main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Restore candidate and remove guard
+        shell: bash
+        run: |
+          git config user.name "teamleaderleo"
+          git config user.email "13091533+teamleaderleo@users.noreply.github.com"
+          git fetch origin source/miniflare-runtime-settlement-clean
+          git push --force origin e58c46624e86ddcc2ef24e9b8e6276f98264900e:source/miniflare-runtime-settlement-clean
+          git rm .github/workflows/internal-cleanup-miniflare-55.yml
+          git commit -m "ci(fieldwork): retire Miniflare cleanup guard"
+          git push origin HEAD:main
