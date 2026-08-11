@@ -1,17 +1,15 @@
 name: Internal simplify Miniflare 55
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/internal-simplify-miniflare-55.yml
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
 
 jobs:
   simplify:
+    if: github.event.pull_request.title == '[INTERNAL TRIGGER] Simplify Miniflare 55'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out candidate branch
