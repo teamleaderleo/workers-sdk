@@ -362,6 +362,18 @@ export class Runtime {
 			});
 		}
 
+		const disposeOnAbort = () => {
+			void this.dispose();
+		};
+		if (abortSignal.aborted) {
+			disposeOnAbort();
+		} else {
+			abortSignal.addEventListener("abort", disposeOnAbort, { once: true });
+			void processExitPromise.then(() => {
+				abortSignal.removeEventListener("abort", disposeOnAbort);
+			});
+		}
+
 		return ports;
 	}
 
