@@ -27,7 +27,7 @@ jobs:
           git config user.name "teamleaderleo"
           git config user.email "13091533+teamleaderleo@users.noreply.github.com"
           git fetch origin source/miniflare-runtime-settlement-clean
-          git push --force origin e58c46624e86ddcc2ef24e9b8e6276f98264900e:source/miniflare-runtime-settlement-clean
+          git push --force origin 6bf45a679aa21386a18ca1ce0ce17c2b6473612e:source/miniflare-runtime-settlement-clean
           git rm .github/workflows/internal-cleanup-miniflare-55.yml
           git commit -m "ci(fieldwork): retire Miniflare cleanup guard"
           git push origin HEAD:main
