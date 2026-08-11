@@ -1,0 +1,160 @@
+name: Internal port Miniflare 55
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  port:
+    if: github.event.pull_request.title == '[INTERNAL TRIGGER] Port Miniflare 55'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out candidate branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: source/miniflare-runtime-settlement-clean
+          fetch-depth: 0
+
+      - name: Port disposal ordering
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          index_path = Path("packages/miniflare/src/index.ts")
+          text = index_path.read_text()
+          start = text.index("\tasync dispose(): Promise<void> {")
+          end_marker = "\n\t}\n}\n\nexport type { WorkerdStructuredLog }"
+          end = text.index(end_marker, start) + len("\n\t}")
+
+          method = r'''\tasync dispose(): Promise<void> {
+          \t\tthis.#disposeController.abort();
+          \t\t// The `ProxyServer` "heap" will be destroyed when `workerd` shuts down,
+          \t\t// invalidating all existing native references. Mark all proxies as invalid.
+          \t\t// Note `dispose()`ing the `#proxyClient` implicitly poison's proxies, but
+          \t\t// we'd like them to be poisoned synchronously here.
+          \t\tthis.#proxyClient?.poisonProxies();
+          \t\t// Preserve a readiness failure without allowing it to skip teardown.
+          \t\tlet waitForReadyFailed = false;
+          \t\tlet waitForReadyError: unknown;
+          \t\ttry {
+          \t\t\tawait this.#waitForReady(/* disposing */ true);
+          \t\t} catch (error) {
+          \t\t\twaitForReadyFailed = true;
+          \t\t\twaitForReadyError = error;
+          \t\t}
+
+          \t\t// Runtime.dispose() requests workerd termination synchronously before
+          \t\t// returning its child-exit promise. Start it before awaiting independent
+          \t\t// cleanup so those hooks cannot delay or skip the termination request.
+          \t\tlet runtimeDisposePromise: Promise<void>;
+          \t\ttry {
+          \t\t\truntimeDisposePromise = Promise.resolve(this.#runtime?.dispose());
+          \t\t} catch (error) {
+          \t\t\truntimeDisposePromise = Promise.reject(error);
+          \t\t}
+          \t\t// Attach a rejection handler immediately so a fast runtime failure cannot
+          \t\t// become unhandled while independent cleanup is still pending.
+          \t\tconst runtimeDisposeOutcome = runtimeDisposePromise.then(
+          \t\t\t() => ({ ok: true as const }),
+          \t\t\t(error: unknown) => ({ ok: false as const, error })
+          \t\t);
+
+          \t\t// Preserve the existing first cleanup error, while still waiting for the
+          \t\t// already-started runtime exit before the outer disposal settles.
+          \t\tlet independentCleanupFailed = false;
+          \t\tlet independentCleanupError: unknown;
+          \t\ttry {
+          \t\t\t// Cleanup as much as possible even if `#init()` threw.
+          \t\t\tawait this.#closeBrowserProcesses();
+
+          \t\t\t// Remove exit hook, we're cleaning up what they would've cleaned up now
+          \t\t\tthis.#removeExitHook?.();
+
+          \t\t\tawait this.#proxyClient?.dispose();
+          \t\t} catch (error) {
+          \t\t\tindependentCleanupFailed = true;
+          \t\t\tindependentCleanupError = error;
+          \t\t}
+
+          \t\tconst runtimeCleanupOutcome = await runtimeDisposeOutcome;
+          \t\tif (independentCleanupFailed) throw independentCleanupError;
+          \t\tif (!runtimeCleanupOutcome.ok) throw runtimeCleanupOutcome.error;
+          \t\t// Close the undici Pool used for dispatching fetch requests to the
+          \t\t// runtime. This must happen after the runtime is disposed, so that
+          \t\t// in-flight connections are broken and close immediately. Without this,
+          \t\t// lingering sockets in the Pool can keep the Node.js event loop alive.
+          \t\t// The Pool may already be destroyed (e.g., if workerd was SIGKILL'd and
+          \t\t// all connections broke), so ignore ClientDestroyedError.
+          \t\ttry {
+          \t\t\tawait this.#runtimeDispatcher?.close();
+          \t\t} catch {}
+          \t\t// Also close the dev-registry dispatcher (same issue as above).
+          \t\ttry {
+          \t\t\tawait this.#devRegistryDispatcher?.close();
+          \t\t} catch {}
+
+          \t\tawait this.#stopLoopbackServer();
+          \t\t// Close the WebSocket server so any connected clients are disconnected
+          \t\t// and their sockets don't keep the Node.js event loop alive. It uses
+          \t\t// `noServer: true` so it doesn't own an HTTP server, but connected
+          \t\t// WebSocket clients still hold open sockets.
+          \t\tthis.#webSocketServer.close();
+          \t\t// Best-effort cleanup: on Windows, workerd may not release file handles
+          \t\t// immediately after disposal, causing EBUSY errors. The temp directory
+          \t\t// lives in os.tmpdir() so the OS will clean it up eventually.
+          \t\tremoveDir(this.#tmpPath, { fireAndForget: true });
+          \t\t// Clean up email session directories in the project temp path. When no
+          \t\t// project temp path is supplied, these live inside `#tmpPath` and are
+          \t\t// already removed above.
+          \t\tconst emailPaths = getEmailPathsToClean(
+          \t\t\tthis.#sharedOpts.resourceTmpPath,
+          \t\t\tthis.#tmpPath
+          \t\t);
+          \t\tif (emailPaths) {
+          \t\t\ttry {
+          \t\t\t\tawait removeDir(emailPaths.sessionDir);
+          \t\t\t} catch (e) {
+          \t\t\t\tthis.#log.debug(
+          \t\t\t\t\t`Unable to remove email session directory: ${String(e)}`
+          \t\t\t\t);
+          \t\t\t}
+          \t\t}
+
+          \t\t// Close the inspector proxy server if there is one
+          \t\tawait this.#maybeInspectorProxyController?.dispose();
+          \t\t// Unregister workers from dev registry and stop the file watcher
+          \t\tawait this.#devRegistry.dispose();
+
+          \t\t// shutdown hyperdrive proxies if any exist
+          \t\tawait this.#hyperdriveProxyController.dispose();
+
+          \t\t// Remove from instance registry as last step in disposal, preserving the
+          \t\t// existing behavior when an earlier cleanup operation fails.
+          \t\tmaybeInstanceRegistry?.delete(this);
+
+          \t\tif (waitForReadyFailed) throw waitForReadyError;
+          \t}'''.replace("\\t", "\t")
+          index_path.write_text(text[:start] + method + text[end:])
+
+          runtime_path = Path("packages/miniflare/src/runtime/index.ts")
+          runtime = runtime_path.read_text()
+          listener = '''\n\t\tconst disposeOnAbort = () => {\n\t\t\tvoid this.dispose();\n\t\t};\n\t\tif (abortSignal.aborted) {\n\t\t\tdisposeOnAbort();\n\t\t} else {\n\t\t\tabortSignal.addEventListener("abort", disposeOnAbort, { once: true });\n\t\t\tvoid processExitPromise.then(() => {\n\t\t\t\tabortSignal.removeEventListener("abort", disposeOnAbort);\n\t\t\t});\n\t\t}\n'''
+          if runtime.count(listener) != 1:
+              raise SystemExit("expected exactly one temporary runtime abort listener")
+          runtime_path.write_text(runtime.replace(listener, "\n"))
+          PY
+
+          git diff --check
+
+      - name: Commit source port
+        shell: bash
+        run: |
+          git config user.name "teamleaderleo"
+          git config user.email "13091533+teamleaderleo@users.noreply.github.com"
+          git add packages/miniflare/src/index.ts packages/miniflare/src/runtime/index.ts
+          git commit -m "[miniflare] await runtime exit around independent cleanup"
+          git push origin HEAD:source/miniflare-runtime-settlement-clean
