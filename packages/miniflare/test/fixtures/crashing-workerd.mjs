@@ -7,6 +7,11 @@ import { arrayBuffer } from "stream/consumers";
 // Consume stdin (config passed via stdin) to avoid EPIPE
 await arrayBuffer(process.stdin);
 
+if (process.env.MINIFLARE_TEST_CRASH_SIGNAL) {
+	process.kill(process.pid, process.env.MINIFLARE_TEST_CRASH_SIGNAL);
+	await new Promise(() => {});
+}
+
 // Write an error to stderr to simulate a startup failure
 process.stderr.write("error: bind(::1, 0): Address not available\n");
 
