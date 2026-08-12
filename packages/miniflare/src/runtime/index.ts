@@ -33,6 +33,11 @@ export type SocketPorts = Map<SocketIdentifier, number /* port */>;
 
 export type { StructuredLogsHandler } from "./structured-logs";
 
+export interface RuntimeProcessExit {
+	code: number | null;
+	signal: NodeJS.Signals | null;
+}
+
 export interface RuntimeOptions {
 	entryAddress: string;
 	loopbackAddress: string;
@@ -42,7 +47,7 @@ export interface RuntimeOptions {
 	verbose?: boolean;
 	handleStructuredLogs?: StructuredLogsHandler;
 	// Called when workerd crashes after the initial ready signal
-	onWorkerdCrashRestart?: () => void;
+	onWorkerdCrashRestart?: (exit: RuntimeProcessExit) => void;
 	// Extra environment variables to set on the spawned `workerd` subprocess.
 	// Merged on top of `process.env` and Miniflare's own defaults
 	// (e.g. `TZ=UTC`, `FORCE_COLOR`), so callers can override those defaults.
@@ -83,9 +88,11 @@ async function waitForPorts(
 	}
 }
 
-function waitForExit(process: childProcess.ChildProcess): Promise<void> {
+function waitForExit(
+	process: childProcess.ChildProcess
+): Promise<RuntimeProcessExit> {
 	return new Promise((resolve) => {
-		process.once("exit", () => resolve());
+		process.once("exit", (code, signal) => resolve({ code, signal }));
 	});
 }
 
@@ -201,7 +208,7 @@ class StartupLogBuffer {
 		this.buffering = false;
 	}
 
-	handleStartupFailure() {
+	handleStartupFailure(exit: RuntimeProcessExit | undefined) {
 		const addressInUseLog = this.stderrBuffer.find((chunk) =>
 			chunk.includes("Address already in use; toString() = ")
 		);
@@ -220,10 +227,24 @@ class StartupLogBuffer {
 		// the failure (e.g. bind errors on IPv6 addresses, permission denied,
 		// missing libraries, etc.)
 		const stderr = this.stderrBuffer.join("").trim();
-		if (stderr.length > 0) {
+		const exitReason =
+			exit === undefined
+				? undefined
+				: exit.signal !== null
+					? `Runtime process exited with signal ${exit.signal}.`
+					: exit.code !== null
+						? `Runtime process exited with code ${exit.code}.`
+						: "Runtime process exited unexpectedly.";
+		if (stderr.length > 0 || exitReason !== undefined) {
+			const details = [
+				exitReason,
+				stderr.length > 0 ? `Runtime stderr:\n${stderr}` : undefined,
+			]
+				.filter((line): line is string => line !== undefined)
+				.join("\n");
 			throw new MiniflareCoreError(
 				"ERR_RUNTIME_FAILURE",
-				`The Workers runtime failed to start. There was likely a problem with the workerd binary or your configuration.\nRuntime stderr:\n${stderr}`
+				`The Workers runtime failed to start. There was likely a problem with the workerd binary or your configuration.\n${details}`
 			);
 		}
 	}
@@ -268,7 +289,7 @@ export class Runtime {
 		const startupLogBuffer = new StartupLogBuffer();
 		this.#process = runtimeProcess;
 		const processExitPromise = waitForExit(runtimeProcess);
-		this.#processExitPromise = processExitPromise;
+		this.#processExitPromise = processExitPromise.then(() => undefined);
 
 		const stdoutStream = runtimeProcess.stdout.pipe(
 			startupLogBuffer.stdoutStream
@@ -295,9 +316,13 @@ export class Runtime {
 		// their ports (e.g. due to a bind failure), `waitForPorts()` would
 		// hang indefinitely. Racing against the exit promise ensures we
 		// detect this and return `undefined` promptly.
+		let earlyExit: RuntimeProcessExit | undefined;
 		const ports = await Promise.race([
 			waitForPorts(controlPipe, options),
-			processExitPromise.then(() => undefined),
+			processExitPromise.then((exit) => {
+				earlyExit = exit;
+				return undefined;
+			}),
 		]);
 		if (ports?.has(kInspectorSocket) && process.env.VSCODE_INSPECTOR_OPTIONS) {
 			// We have an inspector socket and we're in a VSCode Debug Terminal.
@@ -342,12 +367,13 @@ export class Runtime {
 		startupLogBuffer.stopBuffering();
 
 		if (ports === undefined && !abortSignal.aborted) {
-			startupLogBuffer.handleStartupFailure();
+			const exit = earlyExit ?? (await processExitPromise);
+			startupLogBuffer.handleStartupFailure(exit);
 		} else {
 			// workerd is now listening. Watch for unexpected exits so we can
 			// restart.
 			const currentProcess = this.#process;
-			void processExitPromise.then(() => {
+			void processExitPromise.then((exit) => {
 				if (this.#process !== currentProcess) {
 					// We got here because dispose() set this.#process to
 					// undefined before sending SIGKILL
@@ -358,7 +384,7 @@ export class Runtime {
 				}
 				// Crash: clear stale #process and notify the caller.
 				this.#process = undefined;
-				options.onWorkerdCrashRestart?.();
+				options.onWorkerdCrashRestart?.(exit);
 			});
 		}
 

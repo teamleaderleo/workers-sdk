@@ -6,7 +6,7 @@ import { singleModuleManifest } from "../test-shared";
 const unixTest = process.platform === "win32" ? test.skip : test;
 
 unixTest(
-	"startup failure does not report the workerd exit signal",
+	"startup failure reports the workerd exit signal",
 	async ({ expect, onTestFinished }) => {
 		const originalWorkerdPath = process.env.MINIFLARE_WORKERD_PATH;
 		const originalSignal = process.env.MINIFLARE_TEST_WORKERD_SIGNAL;
@@ -50,8 +50,10 @@ unixTest(
 		}
 
 		expect(error).toBeInstanceOf(MiniflareCoreError);
-		expect((error as Error).message).toContain("Workers runtime failed to start");
+		expect((error as Error).message).toContain(
+			"Workers runtime failed to start"
+		);
 		expect((error as Error).message).toContain("Address not available");
-		expect((error as Error).message).not.toContain("SIGTERM");
+		expect((error as Error).message).toContain("SIGTERM");
 	}
 );

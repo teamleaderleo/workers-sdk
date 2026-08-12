@@ -136,6 +136,7 @@ import type {
 	Config,
 	Extension,
 	RuntimeOptions,
+	RuntimeProcessExit,
 	Service,
 	Socket,
 	SocketIdentifier,
@@ -2114,13 +2115,19 @@ export class Miniflare {
 		};
 	}
 
-	#handleWorkerdCrash(): void {
+	#handleWorkerdCrash(exit: RuntimeProcessExit): void {
 		this.#workerdCrashCount++;
+		const exitReason =
+			exit.signal !== null
+				? `signal ${exit.signal}`
+				: exit.code !== null
+					? `exit code ${exit.code}`
+					: "unknown exit status";
 		// Recovery used to be entirely silent, which made a crash look like an
 		// unexplained dev server restart. Always say something: any crash is a
 		// bug worth reporting, and the count distinguishes a one-off from a loop.
 		this.#log.warn(
-			`The Workers runtime crashed unexpectedly and is being restarted (crash #${this.#workerdCrashCount}). ` +
+			`The Workers runtime crashed unexpectedly (${exitReason}) and is being restarted (crash #${this.#workerdCrashCount}). ` +
 				"Any additional runtime output above may indicate the cause."
 		);
 		// A crash destroys the proxy server heap just like a config update.
@@ -2259,7 +2266,7 @@ export class Miniflare {
 				: undefined,
 			verbose: this.#sharedOpts.verbose,
 			handleStructuredLogs: this.#sharedOpts.handleStructuredLogs,
-			onWorkerdCrashRestart: () => this.#handleWorkerdCrash(),
+			onWorkerdCrashRestart: (exit) => this.#handleWorkerdCrash(exit),
 			runtimeEnv: this.#sharedOpts.unsafeRuntimeEnv,
 		};
 		const maybeSocketPorts = await this.#runtime.updateConfig(
