@@ -26,4 +26,4 @@ jobs:
       - name: Wrangler type-check
         run: pnpm exec turbo run check:type --filter=wrangler
       - name: Wrangler lint
-        run: pnpm exec turbo run check:lint --filter=wrangler
+        run: pnpm check:lint --filter wrangler
