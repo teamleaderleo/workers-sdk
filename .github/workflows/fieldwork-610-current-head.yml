@@ -19,9 +19,11 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      - name: Build Wrangler dependency graph
+        run: pnpm exec turbo run build --filter=wrangler
       - name: Focused whoami auth-state test
         run: pnpm --filter wrangler exec vitest run src/__tests__/whoami-active-token-permissions.test.ts
       - name: Wrangler type-check
-        run: pnpm --filter wrangler check:type
+        run: pnpm exec turbo run check:type --filter=wrangler
       - name: Wrangler lint
-        run: pnpm check:lint --filter wrangler
+        run: pnpm exec turbo run check:lint --filter=wrangler
