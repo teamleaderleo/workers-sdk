@@ -1207,8 +1207,28 @@ function normalizeAndValidatePlacement(
 	topLevelEnv: Environment | undefined,
 	rawEnv: RawEnvironment
 ): Config["placement"] {
-	if (rawEnv.placement) {
-		const placement = rawEnv.placement as Record<string, unknown>;
+	const rawPlacement = rawEnv.placement;
+	if (
+		rawPlacement !== undefined &&
+		(typeof rawPlacement !== "object" ||
+			rawPlacement === null ||
+			Array.isArray(rawPlacement))
+	) {
+		diagnostics.errors.push(
+			`"placement" should be an object but got ${JSON.stringify(rawPlacement)}.`
+		);
+		return inheritable(
+			diagnostics,
+			topLevelEnv,
+			rawEnv,
+			"placement",
+			() => true,
+			undefined
+		);
+	}
+
+	if (rawPlacement !== undefined) {
+		const placement = rawPlacement as Record<string, unknown>;
 
 		// Detect which format is being used
 		const hasHint = "hint" in placement;
