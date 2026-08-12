@@ -1,0 +1,27 @@
+name: Fieldwork 610 current-head gates
+
+on:
+  push:
+    branches:
+      - carrier/610-whoami-refresh-run
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Focused whoami auth-state test
+        run: pnpm --dir packages/wrangler vitest run src/__tests__/whoami-active-token-permissions.test.ts --pool forks --poolOptions.forks.isolate=false
+      - name: Wrangler type-check
+        run: pnpm --filter wrangler check:type
+      - name: Wrangler lint
+        run: pnpm check:lint --filter wrangler
