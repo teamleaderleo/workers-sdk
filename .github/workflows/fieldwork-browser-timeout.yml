@@ -27,6 +27,21 @@ jobs:
       - name: Install Dependencies
         uses: ./.github/actions/install-dependencies
 
+      - name: Inspect installed Puppeteer browser installer
+        shell: pwsh
+        run: |
+          $entry = (& pnpm -F miniflare exec node -e "console.log(require.resolve('@puppeteer/browsers'))").Trim()
+          Write-Host "@puppeteer/browsers entry: $entry"
+          $dir = Split-Path $entry
+          Get-ChildItem $dir | Select-Object Name
+          foreach ($file in @("install.js", "httpUtil.js")) {
+            $path = Join-Path $dir $file
+            if (Test-Path $path) {
+              Write-Host "----- $file -----"
+              Get-Content $path
+            }
+          }
+
       - name: Restore Chrome browser cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -36,25 +51,25 @@ jobs:
             ~/Library/Caches/.wrangler/chrome
             ~/AppData/Local/xdg.cache/.wrangler/chrome
 
-      - name: Apply test-policy candidate
+      - name: Apply observed-test timeout candidate
         run: node .fieldwork/browser-timeout-experiment.mjs test-policy
 
-      - name: Show test-policy candidate
+      - name: Show observed-test candidate
         shell: bash
         run: |
           git diff --check
           git diff -- packages/miniflare/test/plugins/browser/index.spec.ts
 
-      - name: Type-check test-policy candidate
-        run: pnpm -F miniflare check:type
+      - name: Type-check observed-test candidate with workspace dependencies
+        run: pnpm check:type --filter=miniflare
 
-      - name: Run Browser Rendering spec with test-policy candidate
+      - name: Run Browser Rendering spec with observed-test candidate
         run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
 
       - name: Inject a slow browser launch
         run: node .fieldwork/browser-timeout-experiment.mjs fault-injection
 
-      - name: Verify named request deadline beats outer Vitest timeout
+      - name: Verify named acquisition deadline beats outer Vitest timeout
         shell: pwsh
         env:
           FIELDWORK_BROWSER_LAUNCH_DELAY_MS: "5000"
@@ -66,13 +81,13 @@ jobs:
           $output = Get-Content fieldwork-timeout.log -Raw
           Write-Host $output
           if ($exitCode -eq 0) {
-            throw "Expected the injected slow launch to exceed the request deadline."
+            throw "Expected the injected slow launch to exceed the acquisition deadline."
           }
-          if ($output -notmatch "Browser Rendering request timed out during dispatch") {
-            throw "Expected a phase-specific Browser Rendering request timeout."
+          if ($output -notmatch "Browser session acquisition timed out") {
+            throw "Expected a phase-specific browser session acquisition timeout."
           }
           if ($output -match "Test timed out in 6000ms") {
-            throw "Outer Vitest timeout fired before the request-owned deadline."
+            throw "Outer Vitest timeout fired before the acquisition-owned deadline."
           }
 
       - name: Reset experiment source edits
@@ -90,8 +105,8 @@ jobs:
           git diff --check
           git diff -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
 
-      - name: Type-check connect-deadline candidate
-        run: pnpm -F miniflare check:type
+      - name: Type-check connect-deadline candidate with workspace dependencies
+        run: pnpm check:type --filter=miniflare
 
       - name: Run Browser Rendering spec with connect-deadline candidate
         run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
