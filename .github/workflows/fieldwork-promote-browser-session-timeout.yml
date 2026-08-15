@@ -1,0 +1,44 @@
+name: Fieldwork Promote Browser Session Timeout
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-timeout-observability
+    paths:
+      - .github/workflows/fieldwork-promote-browser-session-timeout.yml
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout experiment branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Preserve promotion transform
+        run: cp .fieldwork/promote-browser-session-timeout.mjs "$RUNNER_TEMP/promote-browser-session-timeout.mjs"
+
+      - name: Checkout clean proposal branch
+        run: |
+          git fetch origin fieldwork/browser-session-timeout-proposal
+          git checkout fieldwork/browser-session-timeout-proposal
+
+      - name: Apply clean candidate
+        run: node "$RUNNER_TEMP/promote-browser-session-timeout.mjs"
+
+      - name: Verify diff
+        run: |
+          git diff --check
+          git diff -- packages/miniflare/test/plugins/browser/index.spec.ts
+
+      - name: Commit candidate
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/miniflare/test/plugins/browser/index.spec.ts
+          git commit -m "[miniflare] Give browser session acquisition its own timeout"
+          git push origin HEAD:fieldwork/browser-session-timeout-proposal
