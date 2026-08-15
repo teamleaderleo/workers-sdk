@@ -70,12 +70,51 @@ const BROWSER_RENDERING_RETRY = {
 	},
 } satisfies TestOptions;
 
+const BROWSER_SESSION_ACQUIRE_TIMEOUT_MS = 60_000;
+const BROWSER_SESSION_TEST_TIMEOUT_MS = 75_000;
+
+const BROWSER_SESSION_ACQUIRE_RETRY = {
+	timeout: BROWSER_SESSION_TEST_TIMEOUT_MS,
+	retry: {
+		condition:
+			/Chrome readiness probe .* timed out|Browser session acquisition timed out/i,
+		count: 3,
+		delay: 1_000,
+	},
+} satisfies TestOptions;
+
+async function acquireBrowserSession(mf: Miniflare): Promise<string> {
+	const signal = AbortSignal.timeout(BROWSER_SESSION_ACQUIRE_TIMEOUT_MS);
+	try {
+		const res = await mf.dispatchFetch("https://localhost/session", { signal });
+		const text = await res.text();
+		if (!res.ok) {
+			throw new Error(
+				`Browser session acquisition failed with ${res.status} ${res.statusText}\n${text}`
+			);
+		}
+		return text;
+	} catch (cause) {
+		if (signal.aborted) {
+			throw new Error(
+				`Browser session acquisition timed out after ${BROWSER_SESSION_ACQUIRE_TIMEOUT_MS}ms`,
+				{ cause }
+			);
+		}
+		throw cause;
+	}
+}
+
 const BROWSER_WORKER_SCRIPT = () => `
 export default {
 	async fetch(request, env) {
 		if (request.url.endsWith("session")) {
 			const newBrowserSession = await env.MYBROWSER.fetch("https://localhost/v1/acquire")
-			return new Response(await newBrowserSession.text())
+			return new Response(newBrowserSession.body, {
+				status: newBrowserSession.status,
+				statusText: newBrowserSession.statusText,
+				headers: newBrowserSession.headers,
+			})
 		}
 	}
 };
@@ -94,7 +133,7 @@ describe.sequential("browser rendering", { timeout: 20_000 }, () => {
 
 	test(
 		"it creates a browser session",
-		BROWSER_RENDERING_RETRY,
+		BROWSER_SESSION_ACQUIRE_RETRY,
 		async ({ expect }) => {
 			const opts: MiniflareOptions = {
 				workers: [
@@ -112,9 +151,8 @@ describe.sequential("browser rendering", { timeout: 20_000 }, () => {
 			const mf = new Miniflare(opts);
 			useDispose(mf);
 
-			const res = await mf.dispatchFetch("https://localhost/session");
-			const text = await res.text();
-			expect(text.includes("sessionId")).toBe(true);
+			const text = await acquireBrowserSession(mf);
+			expect(text).toContain("sessionId");
 		}
 	);
 
