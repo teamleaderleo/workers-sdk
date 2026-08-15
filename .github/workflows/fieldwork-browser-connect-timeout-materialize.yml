@@ -1,0 +1,49 @@
+name: Fieldwork Materialize Browser Connect Timeout Candidate
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-connect-timeout-materialize
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    name: Materialize clean Candidate B
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout materializer
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Save materializer script
+        shell: bash
+        run: cp .fieldwork/materialize-browser-connect-timeout-current.mjs "$RUNNER_TEMP/materialize-browser-connect-timeout-current.mjs"
+
+      - name: Apply clean candidate on exact upstream base
+        shell: bash
+        run: |
+          git checkout -B fieldwork/browser-connect-timeout-current 49f73de207124171b3f8e9ffb182facb48727388
+          node "$RUNNER_TEMP/materialize-browser-connect-timeout-current.mjs"
+          git diff --check
+          git diff -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Commit clean candidate
+        shell: bash
+        run: |
+          git config user.name "Leo"
+          git config user.email "cheerleaderleo@outlook.com"
+          git add packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+          git commit -m "fix(miniflare): bound browser DevTools connection attempts"
+
+      - name: Push clean candidate branch
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git push --force-with-lease="refs/heads/fieldwork/browser-connect-timeout-current:49f73de207124171b3f8e9ffb182facb48727388" \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/teamleaderleo/workers-sdk.git" \
+            HEAD:refs/heads/fieldwork/browser-connect-timeout-current
