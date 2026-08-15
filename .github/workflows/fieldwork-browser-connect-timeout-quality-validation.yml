@@ -1,0 +1,35 @@
+name: Fieldwork Browser Connect Timeout Quality Validation
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-connect-timeout-quality-validation
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Clean Candidate B format and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Verify candidate source identity
+        shell: bash
+        run: |
+          git diff --exit-code 9d9f32771622eb72a61173321efde4d1f28ba88a -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Check format of changed production file
+        run: pnpm exec oxfmt --check packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Lint changed production file
+        run: pnpm exec oxlint --deny-warnings --type-aware packages/miniflare/src/workers/browser-rendering/binding.worker.ts
