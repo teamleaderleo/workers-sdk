@@ -27,6 +27,9 @@ jobs:
       - name: Install Dependencies
         uses: ./.github/actions/install-dependencies
 
+      - name: Build Miniflare test dependencies
+        run: pnpm check:type --filter=miniflare
+
       - name: Verify per-test timeout overrides suite timeout
         shell: bash
         run: |
