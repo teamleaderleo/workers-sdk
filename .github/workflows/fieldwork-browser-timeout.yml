@@ -1,0 +1,97 @@
+name: Fieldwork Browser Timeout Experiment
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-timeout-observability
+
+permissions:
+  contents: read
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  windows-browser-timeouts:
+    name: Windows browser timeout experiments
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Restore Chrome browser cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: fieldwork-chrome-${{ runner.os }}-${{ hashFiles('packages/miniflare/src/plugins/browser-rendering/browser-version.ts') }}
+          path: |
+            ~/.cache/.wrangler/chrome
+            ~/Library/Caches/.wrangler/chrome
+            ~/AppData/Local/xdg.cache/.wrangler/chrome
+
+      - name: Apply test-policy candidate
+        run: node .fieldwork/browser-timeout-experiment.mjs test-policy
+
+      - name: Show test-policy candidate
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- packages/miniflare/test/plugins/browser/index.spec.ts
+
+      - name: Type-check test-policy candidate
+        run: pnpm -F miniflare check:type
+
+      - name: Run Browser Rendering spec with test-policy candidate
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
+
+      - name: Inject a slow browser launch
+        run: node .fieldwork/browser-timeout-experiment.mjs fault-injection
+
+      - name: Verify named request deadline beats outer Vitest timeout
+        shell: pwsh
+        env:
+          FIELDWORK_BROWSER_LAUNCH_DELAY_MS: "5000"
+          FIELDWORK_BROWSER_REQUEST_TIMEOUT_MS: "2000"
+          FIELDWORK_BROWSER_TEST_TIMEOUT_MS: "6000"
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session" *> fieldwork-timeout.log
+          $exitCode = $LASTEXITCODE
+          $output = Get-Content fieldwork-timeout.log -Raw
+          Write-Host $output
+          if ($exitCode -eq 0) {
+            throw "Expected the injected slow launch to exceed the request deadline."
+          }
+          if ($output -notmatch "Browser Rendering request timed out during dispatch") {
+            throw "Expected a phase-specific Browser Rendering request timeout."
+          }
+          if ($output -match "Test timed out in 6000ms") {
+            throw "Outer Vitest timeout fired before the request-owned deadline."
+          }
+
+      - name: Reset experiment source edits
+        shell: bash
+        run: |
+          git checkout -- packages/miniflare/test/plugins/browser/index.spec.ts
+          git checkout -- packages/miniflare/src/plugins/browser-rendering/index.ts
+
+      - name: Apply BrowserSession connect-deadline candidate
+        run: node .fieldwork/browser-timeout-experiment.mjs connect-deadline
+
+      - name: Show connect-deadline candidate
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Type-check connect-deadline candidate
+        run: pnpm -F miniflare check:type
+
+      - name: Run Browser Rendering spec with connect-deadline candidate
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
