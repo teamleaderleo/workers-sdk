@@ -1,0 +1,139 @@
+name: Fieldwork BrowserSession Connect Timeout Proof v3
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-connect-timeout-proof-v3
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows BrowserSession connect deadline proof v3
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Restore Chrome browser cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: fieldwork-connect-v3-chrome-${{ runner.os }}-${{ hashFiles('packages/miniflare/src/plugins/browser-rendering/browser-version.ts') }}
+          path: |
+            ~/.cache/.wrangler/chrome
+            ~/Library/Caches/.wrangler/chrome
+            ~/AppData/Local/xdg.cache/.wrangler/chrome
+
+      - name: Apply narrowed Candidate B v3
+        run: node .fieldwork/browser-connect-timeout-proof-v3.mjs candidate
+
+      - name: Inspect narrowed Candidate B v3
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Type-check narrowed Candidate B v3
+        run: pnpm check:type --filter=miniflare
+
+      - name: Build narrowed Candidate B v3
+        run: pnpm -F miniflare build
+
+      - name: Run full Browser Rendering spec with narrowed Candidate B v3
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
+
+      - name: Prepare stalled-connect proof
+        shell: bash
+        run: |
+          git checkout -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts packages/miniflare/test/plugins/browser/index.spec.ts
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs candidate
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs stall
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs cleanup-log
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs stall-test
+          git diff --check
+
+      - name: Rebuild stalled-connect proof
+        run: pnpm -F miniflare build
+
+      - name: Prove stalled connect has five bounded attempts, named attribution, and cleanup
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "fieldwork stall acquisition probe" *> fieldwork-stall.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-stall.log -Raw
+          Write-Host $output
+          if ($testExit -ne 0) { throw "Focused stalled-connect proof failed." }
+          $attempts = ([regex]::Matches($output, "FIELDWORK_CONNECT_ATTEMPT")).Count
+          if ($attempts -ne 5) { throw "Expected exactly 5 connect attempts; saw $attempts." }
+          if ($output -notmatch "Chrome DevTools connection attempt timed out after 2000ms \(attempt 5/5\)") { throw "Missing final named connect timeout." }
+          if ($output -notmatch "Failed to establish Chrome DevTools connection for browser session") { throw "Missing acquisition-level registration attribution." }
+          if ($output -notmatch "FIELDWORK_CLEANUP_STATUS .* 410") { throw "Launched browser remained registered after failed registration." }
+          if ($output -match "Test timed out in 20000ms") { throw "Generic Vitest watchdog won over bounded connect failure." }
+          $global:LASTEXITCODE = 0
+
+      - name: Prepare non-retryable negative control
+        shell: bash
+        run: |
+          git checkout -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts packages/miniflare/test/plugins/browser/index.spec.ts
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs candidate
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs nonretryable
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs cleanup-log
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs nonretryable-test
+          git diff --check
+
+      - name: Rebuild non-retryable negative control
+        run: pnpm -F miniflare build
+
+      - name: Prove non-retryable connect failure is not replayed and is cleaned up
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "fieldwork nonretryable acquisition probe" *> fieldwork-nonretryable.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-nonretryable.log -Raw
+          Write-Host $output
+          if ($testExit -ne 0) { throw "Focused non-retryable proof failed." }
+          $attempts = ([regex]::Matches($output, "FIELDWORK_CONNECT_ATTEMPT")).Count
+          if ($attempts -ne 1) { throw "Expected exactly 1 connect attempt; saw $attempts." }
+          if ($output -notmatch "Injected non-retryable DevTools connection failure") { throw "Missing non-retryable failure attribution." }
+          if ($output -notmatch "FIELDWORK_CLEANUP_STATUS .* 410") { throw "Launched browser remained registered after non-retryable registration failure." }
+          $global:LASTEXITCODE = 0
+
+      - name: Prepare caller-cancellation precedence proof
+        shell: bash
+        run: |
+          git checkout -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts packages/miniflare/test/plugins/browser/index.spec.ts
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs candidate
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs stall
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs caller-fault
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs cleanup-log
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs caller-focused-test
+          git diff --check
+
+      - name: Rebuild caller-cancellation precedence proof
+        run: pnpm -F miniflare build
+
+      - name: Prove caller cancellation wins over per-attempt deadline and is cleaned up
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "fieldwork caller acquisition probe" *> fieldwork-caller.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-caller.log -Raw
+          Write-Host $output
+          if ($testExit -ne 0) { throw "Focused caller-cancellation proof failed." }
+          $attempts = ([regex]::Matches($output, "FIELDWORK_CONNECT_ATTEMPT")).Count
+          if ($attempts -ne 1) { throw "Expected caller cancellation during first connect attempt; saw $attempts attempts." }
+          if ($output -notmatch "Injected BrowserSession caller cancellation") { throw "Original caller cancellation reason did not win." }
+          if ($output -match "Chrome DevTools connection attempt timed out") { throw "Per-attempt timeout won over caller cancellation." }
+          if ($output -notmatch "FIELDWORK_CLEANUP_STATUS .* 410") { throw "Launched browser remained registered after caller cancellation." }
+          if ($output -match "Test timed out in 20000ms") { throw "Generic Vitest watchdog won over caller cancellation." }
+          $global:LASTEXITCODE = 0
