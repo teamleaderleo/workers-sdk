@@ -17,6 +17,20 @@ function replaceOnce(source, from, to, label) {
 	return source.slice(0, index) + to + source.slice(index + from.length);
 }
 
+function replaceInTest(source, testName, from, to, label) {
+	const testStart = source.indexOf(`\ttest(\n\t\t"${testName}",`);
+	if (testStart === -1) {
+		throw new Error(`Unable to find test ${testName}`);
+	}
+	const nextTest = source.indexOf("\n\n\ttest(", testStart + 1);
+	const testEnd = nextTest === -1 ? source.length : nextTest;
+	const testSource = source.slice(testStart, testEnd);
+	const replacedTestSource = replaceOnce(testSource, from, to, label);
+	return (
+		source.slice(0, testStart) + replacedTestSource + source.slice(testEnd)
+	);
+}
+
 async function applyObservedTestPolicy() {
 	let source = await readFile(TEST_PATH, "utf8");
 
@@ -24,15 +38,17 @@ async function applyObservedTestPolicy() {
 	const helper = `} satisfies TestOptions;\n\nconst BROWSER_SESSION_ACQUIRE_TIMEOUT_MS = Number(\n\tprocess.env.FIELDWORK_BROWSER_REQUEST_TIMEOUT_MS ?? 60_000\n);\nconst BROWSER_SESSION_TEST_TIMEOUT_MS = Number(\n\tprocess.env.FIELDWORK_BROWSER_TEST_TIMEOUT_MS ?? 75_000\n);\n\nconst BROWSER_SESSION_ACQUIRE_RETRY = {\n\ttimeout: BROWSER_SESSION_TEST_TIMEOUT_MS,\n\tretry: {\n\t\tcondition:\n\t\t\t/Chrome readiness probe .* timed out|Browser session acquisition timed out/i,\n\t\tcount: 3,\n\t\tdelay: 1_000,\n\t},\n} satisfies TestOptions;\n\nasync function acquireBrowserSession(mf: Miniflare): Promise<string> {\n\tconst startedAt = performance.now();\n\tconst signal = AbortSignal.timeout(BROWSER_SESSION_ACQUIRE_TIMEOUT_MS);\n\ttry {\n\t\tconst res = await mf.dispatchFetch(\"https://localhost/session\", { signal });\n\t\treturn await res.text();\n\t} catch (cause) {\n\t\tif (signal.aborted) {\n\t\t\tconst elapsedMs = Math.round(performance.now() - startedAt);\n\t\t\tthrow new Error(\n\t\t\t\t\`Browser session acquisition timed out after \${elapsedMs}ms (budget \${BROWSER_SESSION_ACQUIRE_TIMEOUT_MS}ms)\`,\n\t\t\t\t{ cause }\n\t\t\t);\n\t\t}\n\t\tthrow cause;\n\t}\n}\n\nconst BROWSER_WORKER_SCRIPT`;
 	source = replaceOnce(source, marker, helper, "test timeout helper marker");
 
-	source = replaceOnce(
+	source = replaceInTest(
 		source,
-		`\ttest(\n\t\t\"it creates a browser session\",\n\t\tBROWSER_RENDERING_RETRY,`,
-		`\ttest(\n\t\t\"it creates a browser session\",\n\t\tBROWSER_SESSION_ACQUIRE_RETRY,`,
+		"it creates a browser session",
+		"\t\tBROWSER_RENDERING_RETRY,",
+		"\t\tBROWSER_SESSION_ACQUIRE_RETRY,",
 		"browser session test retry options"
 	);
 
-	source = replaceOnce(
+	source = replaceInTest(
 		source,
+		"it creates a browser session",
 		`\t\t\tconst res = await mf.dispatchFetch(\"https://localhost/session\");\n\t\t\tconst text = await res.text();\n\t\t\texpect(text.includes(\"sessionId\")).toBe(true);`,
 		`\t\t\tconst text = await acquireBrowserSession(mf);\n\t\t\texpect(text.includes(\"sessionId\")).toBe(true);`,
 		"browser session acquisition body"
