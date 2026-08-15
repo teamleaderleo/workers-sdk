@@ -1,0 +1,106 @@
+name: Fieldwork Browser Connect Timeout Final Validation
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-connect-timeout-final-validation
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows exact Candidate B validation
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Restore Chrome browser cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: fieldwork-connect-final-chrome-${{ runner.os }}-${{ hashFiles('packages/miniflare/src/plugins/browser-rendering/browser-version.ts') }}
+          path: |
+            ~/.cache/.wrangler/chrome
+            ~/Library/Caches/.wrangler/chrome
+            ~/AppData/Local/xdg.cache/.wrangler/chrome
+
+      - name: Verify exact Candidate B source identity
+        shell: bash
+        run: |
+          test "$(git rev-parse 9d9f32771622eb72a61173321efde4d1f28ba88a^)" = "49f73de207124171b3f8e9ffb182facb48727388"
+          git diff --exit-code 9d9f32771622eb72a61173321efde4d1f28ba88a -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+          git diff --check 49f73de207124171b3f8e9ffb182facb48727388 9d9f32771622eb72a61173321efde4d1f28ba88a -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+          git diff --stat 49f73de207124171b3f8e9ffb182facb48727388 9d9f32771622eb72a61173321efde4d1f28ba88a -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Type-check exact Candidate B
+        run: pnpm check:type --filter=miniflare
+
+      - name: Build exact Candidate B
+        run: pnpm -F miniflare build
+
+      - name: Run full Browser Rendering spec with exact Candidate B
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
+
+      - name: Prepare exact stalled-connect proof
+        shell: bash
+        run: |
+          git checkout 9d9f32771622eb72a61173321efde4d1f28ba88a -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts packages/miniflare/test/plugins/browser/index.spec.ts
+          node .fieldwork/browser-connect-timeout-final-validation.mjs stall
+          node .fieldwork/browser-connect-timeout-final-validation.mjs registry
+          node .fieldwork/browser-connect-timeout-final-validation.mjs stall-test
+          git diff --check
+
+      - name: Rebuild exact stalled-connect proof
+        run: pnpm -F miniflare build
+
+      - name: Prove exact candidate bounds stalled connect, preserves attribution, and releases registry ownership
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "fieldwork exact Candidate B stall probe" *> fieldwork-exact-stall.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-exact-stall.log -Raw
+          Write-Host $output
+          if ($testExit -ne 0) { throw "Exact Candidate B stalled-connect probe failed." }
+          $attempts = ([regex]::Matches($output, "FIELDWORK_CONNECT_ATTEMPT")).Count
+          if ($attempts -ne 5) { throw "Expected exactly 5 connect attempts; saw $attempts." }
+          if ($output -notmatch "Chrome DevTools connection attempt timed out after 2000ms \(attempt 5/5\)") { throw "Missing final named connect timeout." }
+          if ($output -notmatch "Failed to establish Chrome DevTools connection for browser session") { throw "Missing acquisition-level registration attribution." }
+          if ($output -notmatch "FIELDWORK_REGISTRY_STATUS .* 410") { throw "Browser registry ownership was not released after failed registration." }
+          if ($output -match "Test timed out in 20000ms") { throw "Generic Vitest watchdog won over bounded connect failure." }
+          $global:LASTEXITCODE = 0
+
+      - name: Prepare exact non-retryable negative control
+        shell: bash
+        run: |
+          git checkout 9d9f32771622eb72a61173321efde4d1f28ba88a -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts packages/miniflare/test/plugins/browser/index.spec.ts
+          node .fieldwork/browser-connect-timeout-final-validation.mjs nonretryable
+          node .fieldwork/browser-connect-timeout-final-validation.mjs registry
+          node .fieldwork/browser-connect-timeout-final-validation.mjs nonretryable-test
+          git diff --check
+
+      - name: Rebuild exact non-retryable negative control
+        run: pnpm -F miniflare build
+
+      - name: Prove exact candidate does not replay non-retryable failures
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "fieldwork exact Candidate B nonretryable probe" *> fieldwork-exact-nonretryable.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-exact-nonretryable.log -Raw
+          Write-Host $output
+          if ($testExit -ne 0) { throw "Exact Candidate B non-retryable probe failed." }
+          $attempts = ([regex]::Matches($output, "FIELDWORK_CONNECT_ATTEMPT")).Count
+          if ($attempts -ne 1) { throw "Expected exactly 1 connect attempt; saw $attempts." }
+          if ($output -notmatch "Injected non-retryable DevTools connection failure") { throw "Missing non-retryable failure attribution." }
+          if ($output -notmatch "FIELDWORK_REGISTRY_STATUS .* 410") { throw "Browser registry ownership was not released after non-retryable registration failure." }
+          $global:LASTEXITCODE = 0
