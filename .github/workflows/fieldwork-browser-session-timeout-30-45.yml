@@ -1,0 +1,91 @@
+name: Fieldwork Browser Session Timeout 30 45
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-session-timeout-30-45-experiment
+
+permissions:
+  contents: read
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  windows-acquisition-timeout:
+    name: Windows browser session 30s/45s timeout experiment
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Build Miniflare test dependencies
+        run: pnpm check:type --filter=miniflare
+
+      - name: Restore Chrome browser cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: fieldwork-chrome-${{ runner.os }}-${{ hashFiles('packages/miniflare/src/plugins/browser-rendering/browser-version.ts') }}
+          path: |
+            ~/.cache/.wrangler/chrome
+            ~/Library/Caches/.wrangler/chrome
+            ~/AppData/Local/xdg.cache/.wrangler/chrome
+
+      - name: Apply 30s acquisition / 45s outer candidate
+        run: node .fieldwork/browser-session-timeout-30-45.mjs policy
+
+      - name: Check candidate diff
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- packages/miniflare/test/plugins/browser/index.spec.ts
+
+      - name: Type-check candidate
+        run: pnpm check:type --filter=miniflare
+
+      - name: Run full Browser Rendering spec
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
+
+      - name: Repeat browser session acquisition ten times
+        shell: pwsh
+        run: |
+          $durations = @()
+          for ($i = 1; $i -le 10; $i++) {
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session"
+            if ($LASTEXITCODE -ne 0) { throw "Acquisition repetition $i failed." }
+            $sw.Stop()
+            $durations += [math]::Round($sw.Elapsed.TotalSeconds, 2)
+          }
+          Write-Host "Healthy acquisition wall times (s): $($durations -join ', ')"
+          Write-Host "Min/Max (s): $([math]::Round(($durations | Measure-Object -Minimum).Minimum, 2)) / $([math]::Round(($durations | Measure-Object -Maximum).Maximum, 2))"
+
+      - name: Inject slow browser launch
+        run: node .fieldwork/browser-session-timeout-30-45.mjs launch-fault
+
+      - name: Rebuild Miniflare with launch fault
+        run: pnpm -F miniflare build
+
+      - name: Prove named acquisition deadline still beats outer watchdog
+        shell: pwsh
+        env:
+          FIELDWORK_BROWSER_LAUNCH_DELAY_MS: "5000"
+          FIELDWORK_BROWSER_REQUEST_TIMEOUT_MS: "2000"
+          FIELDWORK_BROWSER_TEST_TIMEOUT_MS: "6000"
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session" *> fieldwork-acquisition-timeout.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-acquisition-timeout.log -Raw
+          Write-Host $output
+          if ($testExit -eq 0) { throw "Expected injected slow launch to exceed acquisition deadline." }
+          if ($output -notmatch "Browser session acquisition timed out") { throw "Expected phase-specific acquisition timeout." }
+          if ($output -match "Test timed out in 6000ms") { throw "Outer Vitest timeout fired first." }
+          $global:LASTEXITCODE = 0
