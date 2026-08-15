@@ -30,14 +30,8 @@ function replaceInTest(testName, from, to, label) {
 
 replaceOnce(
 	`} satisfies TestOptions;\n\nconst BROWSER_WORKER_SCRIPT`,
-	`} satisfies TestOptions;\n\nconst BROWSER_SESSION_ACQUIRE_TIMEOUT_MS = 60_000;\nconst BROWSER_SESSION_TEST_TIMEOUT_MS = 75_000;\n\nconst BROWSER_SESSION_ACQUIRE_RETRY = {\n\ttimeout: BROWSER_SESSION_TEST_TIMEOUT_MS,\n\tretry: {\n\t\tcondition:\n\t\t\t/Chrome readiness probe .* timed out|Browser session acquisition timed out/i,\n\t\tcount: 3,\n\t\tdelay: 1_000,\n\t},\n} satisfies TestOptions;\n\nasync function acquireBrowserSession(mf: Miniflare): Promise<string> {\n\tconst signal = AbortSignal.timeout(BROWSER_SESSION_ACQUIRE_TIMEOUT_MS);\n\ttry {\n\t\tconst response = await mf.dispatchFetch(\"https://localhost/session\", {\n\t\t\tsignal,\n\t\t});\n\t\treturn await response.text();\n\t} catch (cause) {\n\t\tif (signal.aborted) {\n\t\t\tthrow new Error(\n\t\t\t\t\`Browser session acquisition timed out after \${BROWSER_SESSION_ACQUIRE_TIMEOUT_MS}ms\`,\n\t\t\t\t{ cause }\n\t\t\t);\n\t\t}\n\t\tthrow cause;\n\t}\n}\n\nconst BROWSER_WORKER_SCRIPT`,
+	`} satisfies TestOptions;\n\nconst BROWSER_SESSION_ACQUIRE_TIMEOUT_MS = 60_000;\nconst BROWSER_SESSION_TEST_TIMEOUT_MS = 75_000;\n\nconst BROWSER_SESSION_ACQUIRE_RETRY = {\n\ttimeout: BROWSER_SESSION_TEST_TIMEOUT_MS,\n\tretry: {\n\t\tcondition:\n\t\t\t/Chrome readiness probe .* timed out|Browser session acquisition timed out/i,\n\t\tcount: 3,\n\t\tdelay: 1_000,\n\t},\n} satisfies TestOptions;\n\nasync function acquireBrowserSession(mf: Miniflare): Promise<string> {\n\tconst startedAt = performance.now();\n\tconst signal = AbortSignal.timeout(BROWSER_SESSION_ACQUIRE_TIMEOUT_MS);\n\ttry {\n\t\tconst response = await mf.dispatchFetch(\"https://localhost/session\", {\n\t\t\tsignal,\n\t\t});\n\t\treturn await response.text();\n\t} catch (cause) {\n\t\tif (signal.aborted) {\n\t\t\tconst elapsedMs = Math.round(performance.now() - startedAt);\n\t\t\tthrow new Error(\n\t\t\t\t\`Browser session acquisition timed out after \${elapsedMs}ms (budget \${BROWSER_SESSION_ACQUIRE_TIMEOUT_MS}ms)\`,\n\t\t\t\t{ cause }\n\t\t\t);\n\t\t}\n\t\tthrow cause;\n\t}\n}\n\nconst BROWSER_WORKER_SCRIPT`,
 	"browser session timeout helper marker"
-);
-
-replaceOnce(
-	`// We need to run browser rendering tests in a serial manner to avoid a race condition installing the browser.\n// We set the timeout quite high here as one of these tests will need to download the Chrome headless browser.\ndescribe.sequential("browser rendering", { timeout: 20_000 }, () => {`,
-	`// Run browser rendering tests serially to avoid racing while installing the browser.\ndescribe.sequential("browser rendering", () => {`,
-	"stale browser rendering suite timeout"
 );
 
 replaceInTest(
