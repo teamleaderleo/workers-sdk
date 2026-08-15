@@ -1,0 +1,85 @@
+name: Fieldwork Browser Connect Timeout
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-connect-timeout-experiment
+
+permissions:
+  contents: read
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  windows-connect-timeout:
+    name: Windows BrowserSession connect timeout experiment
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Build baseline Miniflare test dependencies
+        run: pnpm check:type --filter=miniflare
+
+      - name: Restore Chrome browser cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: fieldwork-chrome-${{ runner.os }}-${{ hashFiles('packages/miniflare/src/plugins/browser-rendering/browser-version.ts') }}
+          path: |
+            ~/.cache/.wrangler/chrome
+            ~/Library/Caches/.wrangler/chrome
+            ~/AppData/Local/xdg.cache/.wrangler/chrome
+
+      - name: Apply per-attempt connect deadline
+        run: node .fieldwork/browser-connect-timeout-experiment.mjs deadline
+
+      - name: Check candidate diff
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Type-check candidate
+        run: pnpm check:type --filter=miniflare
+
+      - name: Build candidate
+        run: pnpm -F miniflare build
+
+      - name: Run Browser Rendering spec normally
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
+
+      - name: Inject stalled DevTools connection
+        run: node .fieldwork/browser-connect-timeout-experiment.mjs fault
+
+      - name: Rebuild with stalled connection
+        run: pnpm -F miniflare build
+
+      - name: Prove per-attempt deadline owns the stall
+        shell: pwsh
+        run: |
+          $sw = [System.Diagnostics.Stopwatch]::StartNew()
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session" *> fieldwork-connect-timeout.log
+          $testExit = $LASTEXITCODE
+          $sw.Stop()
+          $output = Get-Content fieldwork-connect-timeout.log -Raw
+          Write-Host $output
+          Write-Host "Injected stalled-connect wall time (s): $([math]::Round($sw.Elapsed.TotalSeconds, 2))"
+          if ($testExit -eq 0) {
+            throw "Expected injected stalled DevTools connection to fail."
+          }
+          if ($output -notmatch "Chrome DevTools connection attempt timed out after 2000ms \(attempt 5/5\)") {
+            throw "Expected final per-attempt DevTools timeout to be visible."
+          }
+          if ($output -match "Test timed out in 20000ms") {
+            throw "Outer Vitest timeout fired before connect-attempt deadlines."
+          }
+          $global:LASTEXITCODE = 0
