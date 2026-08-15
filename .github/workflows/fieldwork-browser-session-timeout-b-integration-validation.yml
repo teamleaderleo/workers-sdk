@@ -1,0 +1,100 @@
+name: Fieldwork Browser Session Timeout B Integration Validation
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-session-timeout-b-integration-validation
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows Candidate A plus B diagnostic integration
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Restore Chrome browser cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: fieldwork-a-b-integration-chrome-${{ runner.os }}-${{ hashFiles('packages/miniflare/src/plugins/browser-rendering/browser-version.ts') }}
+          path: |
+            ~/.cache/.wrangler/chrome
+            ~/Library/Caches/.wrangler/chrome
+            ~/AppData/Local/xdg.cache/.wrangler/chrome
+
+      - name: Overlay exact final Candidate B production file
+        shell: bash
+        run: |
+          git checkout 37334286de10040e62abc500f6fe0d8834bad60f -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+          git diff --exit-code a97c23fb20206d4ff21a0d4e366b7ff899d8a539 -- packages/miniflare/test/plugins/browser/index.spec.ts
+          git diff --exit-code 37334286de10040e62abc500f6fe0d8834bad60f -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+          test "$(git hash-object packages/miniflare/src/workers/browser-rendering/binding.worker.ts)" = "37f207680f451eb98cedb4a7622644d1c4fa7590"
+
+      - name: Type-check combined exact A plus B source
+        run: pnpm check:type --filter=miniflare
+
+      - name: Build combined exact A plus B source
+        run: pnpm -F miniflare build
+
+      - name: Run normal Browser Rendering spec with A plus B
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
+
+      - name: Inject deterministic stalled persistent DevTools connect
+        shell: node {0}
+        run: |
+          const fs = require("node:fs");
+          const path = "packages/miniflare/src/workers/browser-rendering/binding.worker.ts";
+          let source = fs.readFileSync(path, "utf8");
+          const from = `\t\ttry {\n\t\t\treturn await fetch(\n\t\t\t\turl,\n\t\t\t\tsignal === undefined ? init : { ...init, signal }\n\t\t\t);`;
+          const to = `\t\ttry {\n\t\t\tif (perAttemptTimeoutMs !== undefined) {\n\t\t\t\tconsole.log(\`FIELDWORK_CONNECT_ATTEMPT \${attempt + 1}\`);\n\t\t\t\treturn await new Promise<Response>((_resolve, reject) => {\n\t\t\t\t\tconst onAbort = () =>\n\t\t\t\t\t\treject(signal?.reason ?? new Error("Injected stalled DevTools connection aborted"));\n\t\t\t\t\tif (signal?.aborted) onAbort();\n\t\t\t\t\telse signal?.addEventListener("abort", onAbort, { once: true });\n\t\t\t\t});\n\t\t\t}\n\t\t\treturn await fetch(\n\t\t\t\turl,\n\t\t\t\tsignal === undefined ? init : { ...init, signal }\n\t\t\t);`;
+          const first = source.indexOf(from);
+          if (first === -1) throw new Error("Candidate B connect fetch block missing");
+          if (source.indexOf(from, first + from.length) !== -1) throw new Error("Candidate B connect fetch block is not unique");
+          source = source.slice(0, first) + to + source.slice(first + from.length);
+          fs.writeFileSync(path, source);
+
+      - name: Rebuild with deterministic stalled connect
+        run: pnpm -F miniflare build
+
+      - name: Prove Candidate A surfaces Candidate B diagnostics
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session" *> "$env:RUNNER_TEMP/fieldwork-a-b-stall.log"
+          $testExit = $LASTEXITCODE
+          $output = Get-Content "$env:RUNNER_TEMP/fieldwork-a-b-stall.log" -Raw
+          Write-Host $output
+          if ($testExit -eq 0) {
+            throw "Expected deterministic stalled Candidate B connect to fail acquisition."
+          }
+          $attempts = ([regex]::Matches($output, "FIELDWORK_CONNECT_ATTEMPT")).Count
+          if ($attempts -ne 5) {
+            throw "Expected exactly 5 Candidate B connect attempts; saw $attempts."
+          }
+          if ($output -notmatch "Browser session acquisition failed with 500") {
+            throw "Candidate A did not surface the Browser binding non-2xx status."
+          }
+          if ($output -notmatch "Failed to establish Chrome DevTools connection for browser session") {
+            throw "Candidate A did not preserve Candidate B registration attribution."
+          }
+          if ($output -notmatch "Chrome DevTools connection attempt timed out after 2000ms \(attempt 5/5\)") {
+            throw "Candidate A did not preserve Candidate B named connect timeout."
+          }
+          if ($output -match "expected false to be true") {
+            throw "Old boolean assertion masking survived A+B integration."
+          }
+          if ($output -match "Test timed out in 75000ms") {
+            throw "Outer Candidate A watchdog masked Candidate B diagnostics."
+          }
+          $global:LASTEXITCODE = 0
