@@ -67,7 +67,7 @@ jobs:
         shell: pwsh
         run: |
           $sw = [System.Diagnostics.Stopwatch]::StartNew()
-          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session" *> fieldwork-connect-timeout.log
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "GET /v1/devtools/browser acquires and connects" *> fieldwork-connect-timeout.log
           $testExit = $LASTEXITCODE
           $sw.Stop()
           $output = Get-Content fieldwork-connect-timeout.log -Raw
