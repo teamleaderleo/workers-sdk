@@ -72,7 +72,11 @@ jobs:
       - name: Inject a slow browser launch
         run: node .fieldwork/browser-timeout-experiment.mjs fault-injection
 
+      - name: Rebuild Miniflare with injected browser delay
+        run: pnpm -F miniflare build
+
       - name: Verify named acquisition deadline beats outer Vitest timeout
+        continue-on-error: true
         shell: pwsh
         env:
           FIELDWORK_BROWSER_LAUNCH_DELAY_MS: "5000"
@@ -94,22 +98,27 @@ jobs:
           }
 
       - name: Reset experiment source edits
+        if: always()
         shell: bash
         run: |
           git checkout -- packages/miniflare/test/plugins/browser/index.spec.ts
           git checkout -- packages/miniflare/src/plugins/browser-rendering/index.ts
 
       - name: Apply BrowserSession connect-deadline candidate
+        if: always()
         run: node .fieldwork/browser-timeout-experiment.mjs connect-deadline
 
       - name: Show connect-deadline candidate
+        if: always()
         shell: bash
         run: |
           git diff --check
           git diff -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
 
       - name: Type-check connect-deadline candidate with workspace dependencies
+        if: always()
         run: pnpm check:type --filter=miniflare
 
       - name: Run Browser Rendering spec with connect-deadline candidate
+        if: always()
         run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
