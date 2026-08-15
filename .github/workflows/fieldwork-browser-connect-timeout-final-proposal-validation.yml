@@ -1,0 +1,41 @@
+name: Fieldwork Final Browser Connect Timeout Proposal Validation
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-connect-timeout-final-proposal-validation
+
+permissions:
+  contents: read
+
+jobs:
+  proposal:
+    name: Final Candidate B proposal shape
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Verify exact final proposal
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=49f73de207124171b3f8e9ffb182facb48727388
+          FINAL=37334286de10040e62abc500f6fe0d8834bad60f
+          test "$(git rev-parse "$FINAL^")" = "$BASE"
+          test "$(git diff --name-only "$BASE" "$FINAL" | wc -l)" -eq 2
+          git diff --check "$BASE" "$FINAL"
+          git diff --name-status "$BASE" "$FINAL"
+
+      - name: Check final changed files format
+        run: pnpm exec oxfmt --check packages/miniflare/src/workers/browser-rendering/binding.worker.ts .changeset/bound-browser-rendering-devtools-connect.md
+
+      - name: Validate changeset metadata
+        run: pnpm exec changeset status --output changeset-status.json
