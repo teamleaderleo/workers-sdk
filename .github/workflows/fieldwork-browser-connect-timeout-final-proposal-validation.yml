@@ -38,4 +38,4 @@ jobs:
         run: pnpm exec oxfmt --check packages/miniflare/src/workers/browser-rendering/binding.worker.ts .changeset/bound-browser-rendering-devtools-connect.md
 
       - name: Validate changeset metadata
-        run: pnpm exec changeset status --output changeset-status.json
+        run: pnpm exec changeset status --since=49f73de207124171b3f8e9ffb182facb48727388 --output changeset-status.json
