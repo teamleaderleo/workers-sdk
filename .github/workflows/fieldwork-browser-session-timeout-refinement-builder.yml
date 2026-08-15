@@ -1,0 +1,199 @@
+name: Fieldwork Browser Session Timeout Refinement Builder
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-session-timeout-refinement-builder
+
+permissions:
+  contents: write
+
+jobs:
+  build-candidate:
+    name: Build refined Candidate A
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Checkout exact upstream base
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: 49f73de207124171b3f8e9ffb182facb48727388
+          fetch-depth: 0
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Apply refined Candidate A
+        shell: node {0}
+        run: |
+          const fs = require("node:fs");
+          const path = "packages/miniflare/test/plugins/browser/index.spec.ts";
+          let source = fs.readFileSync(path, "utf8");
+
+          const workerMarker = "const BROWSER_WORKER_SCRIPT = () => `";
+          if (!source.includes(workerMarker)) throw new Error("browser worker marker missing");
+
+          const helper = [
+            "const BROWSER_SESSION_ACQUIRE_TIMEOUT_MS = 60_000;",
+            "const BROWSER_SESSION_TEST_TIMEOUT_MS = 75_000;",
+            "",
+            "const BROWSER_SESSION_ACQUIRE_RETRY = {",
+            "\ttimeout: BROWSER_SESSION_TEST_TIMEOUT_MS,",
+            "\tretry: {",
+            "\t\tcondition:",
+            "\t\t\t/Chrome readiness probe .* timed out|Browser session acquisition timed out/i,",
+            "\t\tcount: 3,",
+            "\t\tdelay: 1_000,",
+            "\t},",
+            "} satisfies TestOptions;",
+            "",
+            "async function acquireBrowserSession(mf: Miniflare): Promise<string> {",
+            "\tconst signal = AbortSignal.timeout(BROWSER_SESSION_ACQUIRE_TIMEOUT_MS);",
+            "\ttry {",
+            "\t\tconst res = await mf.dispatchFetch(\"https://localhost/session\", { signal });",
+            "\t\tconst text = await res.text();",
+            "\t\tif (!res.ok) {",
+            "\t\t\tthrow new Error(",
+            "\t\t\t\t`Browser session acquisition failed with ${res.status} ${res.statusText}\\n${text}`",
+            "\t\t\t);",
+            "\t\t}",
+            "\t\treturn text;",
+            "\t} catch (cause) {",
+            "\t\tif (signal.aborted) {",
+            "\t\t\tthrow new Error(",
+            "\t\t\t\t`Browser session acquisition timed out after ${BROWSER_SESSION_ACQUIRE_TIMEOUT_MS}ms`,",
+            "\t\t\t\t{ cause }",
+            "\t\t\t);",
+            "\t\t}",
+            "\t\tthrow cause;",
+            "\t}",
+            "}",
+            "",
+          ].join("\n");
+          source = source.replace(workerMarker, helper + "\n" + workerMarker);
+
+          const oldForward = "\t\t\treturn new Response(await newBrowserSession.text())";
+          const newForward = [
+            "\t\t\treturn new Response(newBrowserSession.body, {",
+            "\t\t\t\tstatus: newBrowserSession.status,",
+            "\t\t\t\tstatusText: newBrowserSession.statusText,",
+            "\t\t\t\theaders: newBrowserSession.headers,",
+            "\t\t\t})",
+          ].join("\n");
+          if (!source.includes(oldForward)) throw new Error("browser response forwarding marker missing");
+          source = source.replace(oldForward, newForward);
+
+          const oldTest = [
+            "\ttest(",
+            "\t\t\"it creates a browser session\",",
+            "\t\tBROWSER_RENDERING_RETRY,",
+          ].join("\n");
+          const newTest = [
+            "\ttest(",
+            "\t\t\"it creates a browser session\",",
+            "\t\tBROWSER_SESSION_ACQUIRE_RETRY,",
+          ].join("\n");
+          if (!source.includes(oldTest)) throw new Error("target test options marker missing");
+          source = source.replace(oldTest, newTest);
+
+          const oldAcquire = [
+            "\t\t\tconst res = await mf.dispatchFetch(\"https://localhost/session\");",
+            "\t\t\tconst text = await res.text();",
+            "\t\t\texpect(text.includes(\"sessionId\")).toBe(true);",
+          ].join("\n");
+          const newAcquire = [
+            "\t\t\tconst text = await acquireBrowserSession(mf);",
+            "\t\t\texpect(text).toContain(\"sessionId\");",
+          ].join("\n");
+          if (!source.includes(oldAcquire)) throw new Error("target acquisition marker missing");
+          source = source.replace(oldAcquire, newAcquire);
+
+          fs.writeFileSync(path, source);
+
+      - name: Format refined Candidate A
+        run: pnpm exec oxfmt --write packages/miniflare/test/plugins/browser/index.spec.ts
+
+      - name: Verify refined Candidate A diff
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "49f73de207124171b3f8e9ffb182facb48727388"
+          test "$(git diff --name-only | tr -d '\r')" = "packages/miniflare/test/plugins/browser/index.spec.ts"
+          git diff --check
+          pnpm exec oxfmt --check packages/miniflare/test/plugins/browser/index.spec.ts
+          grep -F 'describe.sequential("browser rendering", { timeout: 20_000 }' packages/miniflare/test/plugins/browser/index.spec.ts
+          grep -F 'const BROWSER_SESSION_ACQUIRE_TIMEOUT_MS = 60_000;' packages/miniflare/test/plugins/browser/index.spec.ts
+          grep -F 'const BROWSER_SESSION_TEST_TIMEOUT_MS = 75_000;' packages/miniflare/test/plugins/browser/index.spec.ts
+          grep -F 'Browser session acquisition failed with ${res.status} ${res.statusText}' packages/miniflare/test/plugins/browser/index.spec.ts
+          grep -F 'status: newBrowserSession.status' packages/miniflare/test/plugins/browser/index.spec.ts
+          grep -F 'expect(text).toContain("sessionId")' packages/miniflare/test/plugins/browser/index.spec.ts
+
+      - name: Type-check refined Candidate A
+        run: pnpm check:type --filter=miniflare
+
+      - name: Save exact candidate test file
+        shell: pwsh
+        run: |
+          Copy-Item packages/miniflare/test/plugins/browser/index.spec.ts "$env:RUNNER_TEMP/candidate-index.spec.ts"
+          $hash = git hash-object packages/miniflare/test/plugins/browser/index.spec.ts
+          "CANDIDATE_TEST_BLOB=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Candidate A test blob: $hash"
+
+      - name: Inject synthetic inner 503 response
+        shell: node {0}
+        run: |
+          const fs = require("node:fs");
+          const path = "packages/miniflare/test/plugins/browser/index.spec.ts";
+          let source = fs.readFileSync(path, "utf8");
+          const oldLine = '\t\t\tconst newBrowserSession = await env.MYBROWSER.fetch("https://localhost/v1/acquire")';
+          const newLine = '\t\t\tconst newBrowserSession = new Response("FIELDWORK inner browser failure", { status: 503, statusText: "Injected Failure" })';
+          if (!source.includes(oldLine)) throw new Error("inner binding fetch marker missing");
+          source = source.replace(oldLine, newLine);
+          fs.writeFileSync(path, source);
+
+      - name: Prove status and body survive the test harness
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session" *> "$env:RUNNER_TEMP/fieldwork-inner-503.log"
+          $testExit = $LASTEXITCODE
+          $output = Get-Content "$env:RUNNER_TEMP/fieldwork-inner-503.log" -Raw
+          Write-Host $output
+          if ($testExit -eq 0) {
+            throw "Expected synthetic inner 503 acquisition to fail."
+          }
+          if ($output -notmatch "Browser session acquisition failed with 503 Injected Failure") {
+            throw "Expected outer acquisition helper to preserve status/statusText."
+          }
+          if ($output -notmatch "FIELDWORK inner browser failure") {
+            throw "Expected outer acquisition helper to preserve inner response body."
+          }
+          if ($output -match "expected false to be true") {
+            throw "Old boolean assertion masking is still present."
+          }
+          if ($output -match "Test timed out") {
+            throw "Synthetic 503 proof was masked by a generic test timeout."
+          }
+          $global:LASTEXITCODE = 0
+
+      - name: Restore exact candidate after synthetic fault
+        shell: pwsh
+        run: |
+          Copy-Item "$env:RUNNER_TEMP/candidate-index.spec.ts" packages/miniflare/test/plugins/browser/index.spec.ts -Force
+          $hash = git hash-object packages/miniflare/test/plugins/browser/index.spec.ts
+          if ($hash -ne $env:CANDIDATE_TEST_BLOB) {
+            throw "Candidate test file changed during fault proof."
+          }
+          git diff --check
+
+      - name: Commit and publish canonical refined Candidate A
+        shell: bash
+        run: |
+          git config user.name "Leo"
+          git config user.email "cheerleaderleo@outlook.com"
+          git add packages/miniflare/test/plugins/browser/index.spec.ts
+          git commit -m "test(miniflare): own browser session acquisition timeout"
+          test "$(git rev-parse HEAD^)" = "49f73de207124171b3f8e9ffb182facb48727388"
+          test "$(git diff --name-only HEAD^ HEAD)" = "packages/miniflare/test/plugins/browser/index.spec.ts"
+          echo "Canonical refined Candidate A: $(git rev-parse HEAD)"
+          git push --force origin HEAD:refs/heads/fieldwork/browser-session-timeout-current
