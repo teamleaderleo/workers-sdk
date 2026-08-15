@@ -1,0 +1,67 @@
+name: Fieldwork BrowserSession End-to-End Abort Proof
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-connect-timeout-proof-v3-e2e-abort
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows browser binding caller abort proof
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Restore Chrome browser cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: fieldwork-connect-v3-chrome-${{ runner.os }}-${{ hashFiles('packages/miniflare/src/plugins/browser-rendering/browser-version.ts') }}
+          path: |
+            ~/.cache/.wrangler/chrome
+            ~/Library/Caches/.wrangler/chrome
+            ~/AppData/Local/xdg.cache/.wrangler/chrome
+
+      - name: Prepare end-to-end caller abort proof
+        shell: bash
+        run: |
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs candidate
+          node .fieldwork/browser-connect-timeout-e2e-abort.mjs widen
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs stall
+          node .fieldwork/browser-connect-timeout-proof-v3.mjs cleanup-log
+          node .fieldwork/browser-connect-timeout-e2e-abort.mjs test
+          git diff --check
+          git diff -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts packages/miniflare/test/plugins/browser/index.spec.ts
+
+      - name: Build end-to-end caller abort proof
+        run: pnpm -F miniflare build
+
+      - name: Prove user-worker abort reaches stalled BrowserSession connect and cleanup
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "fieldwork end-to-end caller abort probe" *> fieldwork-e2e-abort.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-e2e-abort.log -Raw
+          Write-Host $output
+          if ($testExit -ne 0) { throw "Focused end-to-end caller abort probe failed." }
+          if ($output -notmatch "FIELDWORK_E2E_CALLER_RESPONSE") { throw "Missing caller-side abort observation." }
+          if ($output -notmatch "Injected user-worker caller cancellation") { throw "Caller did not receive its own abort reason." }
+          if ($output -match "FIELDWORK_CALLER_UNEXPECTED_RESPONSE") { throw "Browser binding returned instead of rejecting the aborted caller." }
+          $attempts = ([regex]::Matches($output, "FIELDWORK_CONNECT_ATTEMPT")).Count
+          if ($attempts -ne 1) { throw "Expected exactly one stalled downstream connect attempt before caller abort; saw $attempts." }
+          if ($output -match "Chrome DevTools connection attempt timed out") { throw "Internal per-attempt timeout won over caller cancellation." }
+          if ($output -notmatch "FIELDWORK_CLEANUP_STATUS .* 410") { throw "Downstream acquisition did not clean up the launched browser after caller cancellation." }
+          if ($output -match "Test timed out in 20000ms") { throw "Vitest watchdog won over caller cancellation." }
+          $global:LASTEXITCODE = 0
