@@ -71,6 +71,7 @@ function isRetryableFetchError(error: unknown): boolean {
 }
 
 const MAX_BODY_PREVIEW = 2000;
+const BROWSER_SESSION_CONNECT_ATTEMPT_TIMEOUT_MS = 2_000;
 
 function truncateBody(text: string): string {
 	if (text.length <= MAX_BODY_PREVIEW) {
@@ -127,15 +128,50 @@ async function fetchWithConnectRetry(
 		maxAttempts = 5,
 		baseDelayMs = 25,
 		maxDelayMs = 250,
-	}: { maxAttempts?: number; baseDelayMs?: number; maxDelayMs?: number } = {}
+		perAttemptTimeoutMs,
+	}: {
+		maxAttempts?: number;
+		baseDelayMs?: number;
+		maxDelayMs?: number;
+		perAttemptTimeoutMs?: number;
+	} = {}
 ): Promise<Response> {
 	let lastError: unknown;
+	const callerSignal = init?.signal ?? undefined;
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
+		if (callerSignal?.aborted) {
+			throw callerSignal.reason;
+		}
+		const timeoutSignal =
+			perAttemptTimeoutMs === undefined
+				? undefined
+				: AbortSignal.timeout(perAttemptTimeoutMs);
+		const signal =
+			timeoutSignal === undefined
+				? callerSignal
+				: callerSignal === undefined
+					? timeoutSignal
+					: AbortSignal.any([callerSignal, timeoutSignal]);
 		try {
-			return await fetch(url, init);
+			return await fetch(
+				url,
+				signal === undefined ? init : { ...init, signal }
+			);
 		} catch (e) {
-			lastError = e;
-			if (!isRetryableFetchError(e) || attempt === maxAttempts - 1) {
+			if (callerSignal?.aborted) {
+				throw callerSignal.reason ?? e;
+			}
+			const attemptTimedOut = timeoutSignal?.aborted === true;
+			lastError = attemptTimedOut
+				? new Error(
+						`Chrome DevTools connection attempt timed out after ${perAttemptTimeoutMs}ms (attempt ${attempt + 1}/${maxAttempts})`,
+						{ cause: e }
+					)
+				: e;
+			if (
+				(!attemptTimedOut && !isRetryableFetchError(e)) ||
+				attempt === maxAttempts - 1
+			) {
 				break;
 			}
 			const delay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
@@ -174,11 +210,20 @@ export class BrowserSession extends MiniflareDurableObject<BrowserSessionEnv> {
 		// This serves as the health indicator for the session and is reused
 		// by the legacy chunked-framing client (/v1/connectDevtools).
 		const wsUrl = this.sessionInfo.wsEndpoint.replace("ws://", "http://");
-		const resp = await fetchWithConnectRetry(wsUrl, {
-			headers: { Upgrade: "websocket" },
-		});
-		assert(resp.webSocket !== null, "Expected a WebSocket response");
-		this.chromeWs = resp.webSocket;
+		try {
+			const resp = await fetchWithConnectRetry(
+				wsUrl,
+				{ headers: { Upgrade: "websocket" } },
+				{
+					perAttemptTimeoutMs: BROWSER_SESSION_CONNECT_ATTEMPT_TIMEOUT_MS,
+				}
+			);
+			assert(resp.webSocket !== null, "Expected a WebSocket response");
+			this.chromeWs = resp.webSocket;
+		} catch (e) {
+			this.closeSession();
+			throw e;
+		}
 		this.chromeWs.accept();
 		// Forward Chrome messages to whatever legacyServerWs is currently connected.
 		// Set up once here so reconnects don't accumulate duplicate listeners.
@@ -492,11 +537,37 @@ class BrowserRenderingRouter extends Router {
 			resp,
 			"Failed to launch local browser via miniflare loopback (/browser/launch)"
 		);
-		await this.#fetchSession(sessionInfo.sessionId, "/session-info", {
-			method: "POST",
-			body: JSON.stringify(sessionInfo),
-		});
-		return sessionInfo;
+
+		try {
+			const sessionResp = await this.#fetchSession(
+				sessionInfo.sessionId,
+				"/session-info",
+				{
+					method: "POST",
+					body: JSON.stringify(sessionInfo),
+				}
+			);
+			if (!sessionResp.ok) {
+				const text = await sessionResp.text();
+				throw new Error(
+					`Failed to establish Chrome DevTools connection for browser session ${sessionInfo.sessionId}: upstream returned ${sessionResp.status} ${sessionResp.statusText}\n${truncateBody(text)}`
+				);
+			}
+			return sessionInfo;
+		} catch (e) {
+			// /browser/launch registers the Chrome process before BrowserSession
+			// setup. Release that ownership if session registration fails.
+			const closeUrl = new URL("http://localhost/browser/close");
+			closeUrl.searchParams.set("sessionId", sessionInfo.sessionId);
+			try {
+				await this.env[SharedBindings.MAYBE_SERVICE_LOOPBACK].fetch(closeUrl, {
+					method: "POST",
+				});
+			} catch {
+				// Preserve the registration failure as the primary error.
+			}
+			throw e;
+		}
 	}
 
 	async #getActiveSessions() {
