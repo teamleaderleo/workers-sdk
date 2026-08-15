@@ -1,0 +1,61 @@
+name: Fieldwork Browser Connect Timeout Negative Control
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-connect-timeout-negative-control
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows non-retryable connect control
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Verify clean candidate parent and source
+        shell: bash
+        run: |
+          test "$(git rev-parse 9d9f32771622eb72a61173321efde4d1f28ba88a^)" = "49f73de207124171b3f8e9ffb182facb48727388"
+          git diff --exit-code 9d9f32771622eb72a61173321efde4d1f28ba88a -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Build candidate dependencies
+        run: pnpm check:type --filter=miniflare
+
+      - name: Inject non-retryable connect failure
+        shell: bash
+        run: |
+          node .fieldwork/browser-connect-timeout-negative-control.mjs
+          git diff --check
+
+      - name: Build injected control
+        run: pnpm -F miniflare build
+
+      - name: Prove non-retryable failure is not replayed
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "fieldwork exact Candidate B non-retryable probe" *> fieldwork-nonretryable.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-nonretryable.log -Raw
+          Write-Host $output
+          if ($testExit -ne 0) { throw "Non-retryable control test failed." }
+          $attempts = ([regex]::Matches($output, "FIELDWORK_CONNECT_ATTEMPT")).Count
+          if ($attempts -ne 1) { throw "Expected exactly one connect attempt; saw $attempts." }
+          if ($output -notmatch "Injected non-retryable DevTools connection failure") { throw "Missing injected failure attribution." }
+          if ($output -notmatch "Failed to establish Chrome DevTools connection for browser session") { throw "Missing registration attribution." }
+          if ($output -notmatch "FIELDWORK_REGISTRY_STATUS .* 410") { throw "Browser registry ownership was not released." }
+          if ($output -match "Chrome DevTools connection attempt timed out") { throw "Timeout path incorrectly handled non-retryable failure." }
+          if ($output -match "Test timed out in 20000ms") { throw "Vitest watchdog won over non-retryable failure." }
+          $global:LASTEXITCODE = 0
