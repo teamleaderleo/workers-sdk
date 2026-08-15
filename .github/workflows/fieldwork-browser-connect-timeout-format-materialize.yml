@@ -1,0 +1,40 @@
+name: Fieldwork Format Browser Connect Timeout Candidate
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-connect-timeout-format-materialize
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    name: Materialize formatted Candidate B
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout formatter branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Build single formatted candidate commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=49f73de207124171b3f8e9ffb182facb48727388
+          OLD=9d9f32771622eb72a61173321efde4d1f28ba88a
+          TARGET=fieldwork/browser-connect-timeout-formatted
+          FILE=packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+          git checkout -B "$TARGET" "$BASE"
+          git checkout "$OLD" -- "$FILE"
+          pnpm exec oxfmt "$FILE"
+          pnpm exec oxfmt --check "$FILE"
+          git diff --check
+          git add "$FILE"
+          git -c user.name='Leo' -c user.email='cheerleaderleo@outlook.com' commit -m 'fix(miniflare): bound browser DevTools connection attempts'
+          git push --force origin HEAD:"refs/heads/$TARGET"
