@@ -12,7 +12,7 @@ jobs:
   windows:
     name: Windows browser binding caller abort proof
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
     steps:
@@ -34,10 +34,24 @@ jobs:
             ~/Library/Caches/.wrangler/chrome
             ~/AppData/Local/xdg.cache/.wrangler/chrome
 
-      - name: Prepare end-to-end caller abort proof
+      - name: Apply narrowed Candidate B v3
         shell: bash
         run: |
           node .fieldwork/browser-connect-timeout-proof-v3.mjs candidate
+          git diff --check
+
+      - name: Type-check narrowed Candidate B v3
+        run: pnpm check:type --filter=miniflare
+
+      - name: Build narrowed Candidate B v3
+        run: pnpm -F miniflare build
+
+      - name: Warm Chrome with a healthy browser acquisition
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session"
+
+      - name: Prepare end-to-end caller abort fault
+        shell: bash
+        run: |
           node .fieldwork/browser-connect-timeout-e2e-abort.mjs widen
           node .fieldwork/browser-connect-timeout-proof-v3.mjs stall
           node .fieldwork/browser-connect-timeout-proof-v3.mjs cleanup-log
@@ -45,10 +59,7 @@ jobs:
           git diff --check
           git diff -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts packages/miniflare/test/plugins/browser/index.spec.ts
 
-      - name: Type-check end-to-end caller abort proof
-        run: pnpm check:type --filter=miniflare
-
-      - name: Build end-to-end caller abort proof
+      - name: Rebuild end-to-end caller abort fault
         run: pnpm -F miniflare build
 
       - name: Prove user-worker abort reaches stalled BrowserSession connect and cleanup
