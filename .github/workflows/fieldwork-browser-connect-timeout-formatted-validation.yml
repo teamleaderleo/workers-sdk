@@ -1,0 +1,68 @@
+name: Fieldwork Formatted Browser Connect Timeout Validation
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-connect-timeout-formatted-validation
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Formatted Candidate B quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Verify exact source identity
+        shell: bash
+        run: |
+          test "$(git rev-parse 9d8c9a7d92dbc1f66d2bd7956c04bb3903a5ebb6^)" = "49f73de207124171b3f8e9ffb182facb48727388"
+          git diff --exit-code 9d8c9a7d92dbc1f66d2bd7956c04bb3903a5ebb6 -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+          git diff --check 49f73de207124171b3f8e9ffb182facb48727388 9d8c9a7d92dbc1f66d2bd7956c04bb3903a5ebb6 -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Check format
+        run: pnpm exec oxfmt --check packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Lint production file
+        run: pnpm exec oxlint --deny-warnings --type-aware packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+  windows:
+    name: Formatted Candidate B Windows smoke
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Verify exact source identity
+        shell: bash
+        run: |
+          test "$(git rev-parse 9d8c9a7d92dbc1f66d2bd7956c04bb3903a5ebb6^)" = "49f73de207124171b3f8e9ffb182facb48727388"
+          git diff --exit-code 9d8c9a7d92dbc1f66d2bd7956c04bb3903a5ebb6 -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Type-check exact formatted candidate
+        run: pnpm check:type --filter=miniflare
+
+      - name: Build exact formatted candidate
+        run: pnpm -F miniflare build
+
+      - name: Run full Browser Rendering spec
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
