@@ -45,6 +45,9 @@ jobs:
           git diff --check
           git diff -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts packages/miniflare/test/plugins/browser/index.spec.ts
 
+      - name: Type-check end-to-end caller abort proof
+        run: pnpm check:type --filter=miniflare
+
       - name: Build end-to-end caller abort proof
         run: pnpm -F miniflare build
 
@@ -62,6 +65,6 @@ jobs:
           $attempts = ([regex]::Matches($output, "FIELDWORK_CONNECT_ATTEMPT")).Count
           if ($attempts -ne 1) { throw "Expected exactly one stalled downstream connect attempt before caller abort; saw $attempts." }
           if ($output -match "Chrome DevTools connection attempt timed out") { throw "Internal per-attempt timeout won over caller cancellation." }
-          if ($output -notmatch "FIELDWORK_CLEANUP_STATUS .* 410") { throw "Downstream acquisition did not clean up the launched browser after caller cancellation." }
+          if ($output -notmatch "FIELDWORK_CLEANUP_STATUS .* 410") { throw "Downstream acquisition did not release the browser registry entry after caller cancellation." }
           if ($output -match "Test timed out in 20000ms") { throw "Vitest watchdog won over caller cancellation." }
           $global:LASTEXITCODE = 0
