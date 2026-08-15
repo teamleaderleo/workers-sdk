@@ -1,0 +1,50 @@
+name: Fieldwork Materialize Browser Session Timeout
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-session-timeout-materialize
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Apply narrowed candidate
+        run: |
+          node .fieldwork/browser-timeout-experiment.mjs test-policy
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = "packages/miniflare/test/plugins/browser/index.spec.ts";
+          let source = fs.readFileSync(path, "utf8");
+          source = source.replace(
+            'const BROWSER_SESSION_ACQUIRE_TIMEOUT_MS = Number(\n\tprocess.env.FIELDWORK_BROWSER_REQUEST_TIMEOUT_MS ?? 60_000\n);',
+            'const BROWSER_SESSION_ACQUIRE_TIMEOUT_MS = 60_000;'
+          );
+          source = source.replace(
+            'const BROWSER_SESSION_TEST_TIMEOUT_MS = Number(\n\tprocess.env.FIELDWORK_BROWSER_TEST_TIMEOUT_MS ?? 75_000\n);',
+            'const BROWSER_SESSION_TEST_TIMEOUT_MS = 75_000;'
+          );
+          source = source.replace('\tconst startedAt = performance.now();\n', '');
+          source = source.replace(
+            '\t\t\tconst elapsedMs = Math.round(performance.now() - startedAt);\n',
+            ''
+          );
+          source = source.replace(
+            '`Browser session acquisition timed out after ${elapsedMs}ms (budget ${BROWSER_SESSION_ACQUIRE_TIMEOUT_MS}ms)`',
+            '`Browser session acquisition timed out after ${BROWSER_SESSION_ACQUIRE_TIMEOUT_MS}ms`'
+          );
+          fs.writeFileSync(path, source);
+          NODE
+          git diff --check
+          git diff -- packages/miniflare/test/plugins/browser/index.spec.ts
+      - name: Commit source candidate
+        run: |
+          git config user.name "fieldwork-bot"
+          git config user.email "fieldwork-bot@users.noreply.github.com"
+          git add packages/miniflare/test/plugins/browser/index.spec.ts
+          git commit -m "test(miniflare): own browser session acquisition timeout"
+          git push origin HEAD:fieldwork/browser-session-timeout-materialize
