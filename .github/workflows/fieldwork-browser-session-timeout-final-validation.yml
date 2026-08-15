@@ -1,0 +1,101 @@
+name: Fieldwork Browser Session Timeout Final Validation
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-session-timeout-final-validation
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows exact Candidate A validation
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Restore Chrome browser cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: fieldwork-final-chrome-${{ runner.os }}-${{ hashFiles('packages/miniflare/src/plugins/browser-rendering/browser-version.ts') }}
+          path: |
+            ~/.cache/.wrangler/chrome
+            ~/Library/Caches/.wrangler/chrome
+            ~/AppData/Local/xdg.cache/.wrangler/chrome
+
+      - name: Verify Candidate A source is the clean commit
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD^)" = "d93625eed59148442a96ca0925d1e62269753ac7"
+          git diff --exit-code d93625eed59148442a96ca0925d1e62269753ac7 -- packages/miniflare/test/plugins/browser/index.spec.ts
+          grep -F 'describe.sequential("browser rendering", { timeout: 20_000 }' packages/miniflare/test/plugins/browser/index.spec.ts
+          grep -F 'const BROWSER_SESSION_ACQUIRE_TIMEOUT_MS = 60_000;' packages/miniflare/test/plugins/browser/index.spec.ts
+          grep -F 'const BROWSER_SESSION_TEST_TIMEOUT_MS = 75_000;' packages/miniflare/test/plugins/browser/index.spec.ts
+
+      - name: Type-check exact Candidate A
+        run: pnpm check:type --filter=miniflare
+
+      - name: Run full Browser Rendering spec on exact Candidate A
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
+
+      - name: Measure healthy browser session acquisition three times
+        shell: pwsh
+        run: |
+          $durations = @()
+          for ($i = 1; $i -le 3; $i++) {
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Healthy acquisition repetition $i failed."
+            }
+            $sw.Stop()
+            $durations += [math]::Round($sw.Elapsed.TotalSeconds, 2)
+          }
+          Write-Host "Final Candidate A healthy acquisition wall times (s): $($durations -join ', ')"
+          Write-Host "Final Candidate A min/max (s): $([math]::Round(($durations | Measure-Object -Minimum).Minimum, 2)) / $([math]::Round(($durations | Measure-Object -Maximum).Maximum, 2))"
+
+      - name: Inject deterministic 65s browser launch stall
+        shell: node {0}
+        run: |
+          const fs = require("node:fs");
+          const path = "packages/miniflare/src/plugins/browser-rendering/index.ts";
+          let source = fs.readFileSync(path, "utf8");
+          const marker = `}) {\n\tconst platform = detectBrowserPlatform();`;
+          if (!source.includes(marker)) throw new Error("launchBrowser marker missing");
+          source = source.replace(
+            marker,
+            `}) {\n\tawait new Promise((resolve) => setTimeout(resolve, 65_000));\n\tconst platform = detectBrowserPlatform();`
+          );
+          fs.writeFileSync(path, source);
+
+      - name: Rebuild Miniflare with launch stall
+        run: pnpm -F miniflare build
+
+      - name: Prove the 60s acquisition deadline beats the 75s outer watchdog
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session" *> fieldwork-final-acquisition-timeout.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-final-acquisition-timeout.log -Raw
+          Write-Host $output
+          if ($testExit -eq 0) {
+            throw "Expected injected 65s launch stall to exceed the 60s acquisition deadline."
+          }
+          if ($output -notmatch "Browser session acquisition timed out after 60000ms") {
+            throw "Expected the named 60s browser session acquisition timeout."
+          }
+          if ($output -match "Test timed out in 75000ms") {
+            throw "Outer 75s Vitest watchdog fired before the acquisition-owned deadline."
+          }
+          $global:LASTEXITCODE = 0
