@@ -1,0 +1,163 @@
+name: Fieldwork Browser Timeout Current Main
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-timeout-current-experiment
+
+permissions:
+  contents: read
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  windows-browser-timeouts:
+    name: Windows current-main browser timeout experiments
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Build Miniflare test dependencies
+        run: pnpm check:type --filter=miniflare
+
+      - name: Verify per-test timeout overrides suite timeout
+        shell: bash
+        run: |
+          cat > packages/miniflare/test/fieldwork-timeout-precedence.spec.ts <<'EOF'
+          import { describe, expect, it } from "vitest";
+
+          describe("timeout precedence", { timeout: 100 }, () => {
+            it("uses the explicit test timeout", { timeout: 1_000 }, async () => {
+              await new Promise((resolve) => setTimeout(resolve, 250));
+              expect(true).toBe(true);
+            });
+          });
+          EOF
+          pnpm -F miniflare test:ci test/fieldwork-timeout-precedence.spec.ts
+          rm packages/miniflare/test/fieldwork-timeout-precedence.spec.ts
+
+      - name: Restore Chrome browser cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: fieldwork-chrome-${{ runner.os }}-${{ hashFiles('packages/miniflare/src/plugins/browser-rendering/browser-version.ts') }}
+          path: |
+            ~/.cache/.wrangler/chrome
+            ~/Library/Caches/.wrangler/chrome
+            ~/AppData/Local/xdg.cache/.wrangler/chrome
+
+      - name: Apply acquisition-owned timeout candidate
+        run: node .fieldwork/browser-timeout-experiment.mjs test-policy
+
+      - name: Check acquisition candidate diff
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- packages/miniflare/test/plugins/browser/index.spec.ts
+
+      - name: Type-check acquisition candidate
+        run: pnpm check:type --filter=miniflare
+
+      - name: Run full Browser Rendering spec with acquisition candidate
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
+
+      - name: Measure healthy browser session acquisition five times
+        shell: pwsh
+        run: |
+          $durations = @()
+          for ($i = 1; $i -le 5; $i++) {
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Healthy acquisition repetition $i failed."
+            }
+            $sw.Stop()
+            $durations += [math]::Round($sw.Elapsed.TotalSeconds, 2)
+          }
+          Write-Host "Healthy acquisition wall times (s): $($durations -join ', ')"
+          Write-Host "Min/Max (s): $([math]::Round(($durations | Measure-Object -Minimum).Minimum, 2)) / $([math]::Round(($durations | Measure-Object -Maximum).Maximum, 2))"
+
+      - name: Inject slow browser launch
+        run: node .fieldwork/browser-timeout-experiment.mjs launch-fault
+
+      - name: Rebuild Miniflare with launch fault
+        run: pnpm -F miniflare build
+
+      - name: Prove acquisition deadline beats outer Vitest timeout
+        shell: pwsh
+        env:
+          FIELDWORK_BROWSER_LAUNCH_DELAY_MS: "5000"
+          FIELDWORK_BROWSER_REQUEST_TIMEOUT_MS: "2000"
+          FIELDWORK_BROWSER_TEST_TIMEOUT_MS: "6000"
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session" *> fieldwork-acquisition-timeout.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-acquisition-timeout.log -Raw
+          Write-Host $output
+          if ($testExit -eq 0) {
+            throw "Expected injected slow launch to exceed the acquisition deadline."
+          }
+          if ($output -notmatch "Browser session acquisition timed out") {
+            throw "Expected phase-specific browser session acquisition timeout."
+          }
+          if ($output -match "Test timed out in 6000ms") {
+            throw "Outer Vitest timeout fired before acquisition-owned deadline."
+          }
+          $global:LASTEXITCODE = 0
+
+      - name: Reset acquisition experiment edits
+        shell: bash
+        run: |
+          git checkout -- packages/miniflare/test/plugins/browser/index.spec.ts
+          git checkout -- packages/miniflare/src/plugins/browser-rendering/index.ts
+
+      - name: Apply BrowserSession connect-deadline candidate
+        run: node .fieldwork/browser-timeout-experiment.mjs connect-deadline
+
+      - name: Check connect-deadline candidate diff
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Type-check connect-deadline candidate
+        run: pnpm check:type --filter=miniflare
+
+      - name: Build Miniflare with connect-deadline candidate
+        run: pnpm -F miniflare build
+
+      - name: Run full Browser Rendering spec with connect-deadline candidate
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
+
+      - name: Inject stalled Chrome DevTools connection
+        run: node .fieldwork/browser-timeout-experiment.mjs connect-fault
+
+      - name: Rebuild Miniflare with stalled connect
+        run: pnpm -F miniflare build
+
+      - name: Prove connect attempts own their timeout
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session" *> fieldwork-connect-timeout.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-connect-timeout.log -Raw
+          Write-Host $output
+          if ($testExit -eq 0) {
+            throw "Expected injected stalled DevTools connection to fail."
+          }
+          if ($output -notmatch "Chrome DevTools connection attempt timed out after 2000ms \(attempt 5/5\)") {
+            throw "Expected the final per-attempt DevTools connection timeout to be visible."
+          }
+          if ($output -match "Test timed out in 20000ms") {
+            throw "Outer Vitest timeout fired before connect-attempt deadlines."
+          }
+          $global:LASTEXITCODE = 0
