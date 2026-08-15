@@ -1,0 +1,113 @@
+name: Fieldwork BrowserSession Connect Timeout Proof v2
+
+on:
+  push:
+    branches:
+      - fieldwork/browser-connect-timeout-proof-v2
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows BrowserSession connect deadline proof
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Restore Chrome browser cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: fieldwork-connect-v2-chrome-${{ runner.os }}-${{ hashFiles('packages/miniflare/src/plugins/browser-rendering/browser-version.ts') }}
+          path: |
+            ~/.cache/.wrangler/chrome
+            ~/Library/Caches/.wrangler/chrome
+            ~/AppData/Local/xdg.cache/.wrangler/chrome
+
+      - name: Apply Candidate B v2
+        run: node .fieldwork/browser-connect-timeout-proof-v2.mjs candidate
+
+      - name: Inspect Candidate B v2
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+
+      - name: Type-check Candidate B v2
+        run: pnpm check:type --filter=miniflare
+
+      - name: Build Candidate B v2
+        run: pnpm -F miniflare build
+
+      - name: Run full Browser Rendering spec with Candidate B v2
+        run: pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts
+
+      - name: Inject deterministic stalled DevTools connect
+        run: node .fieldwork/browser-connect-timeout-proof-v2.mjs stall
+
+      - name: Rebuild with stalled DevTools connect
+        run: pnpm -F miniflare build
+
+      - name: Prove per-attempt timeout retries exhaust before Vitest watchdog
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session" *> fieldwork-connect-retry-timeout.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-connect-retry-timeout.log -Raw
+          Write-Host $output
+          if ($testExit -eq 0) {
+            throw "Expected the deterministic stalled DevTools connection to fail acquisition."
+          }
+          if ($output -notmatch "Chrome DevTools connection attempt timed out after 2000ms \(attempt 5/5\)") {
+            throw "Expected final named per-attempt timeout after 5 helper attempts."
+          }
+          if ($output -notmatch "Failed to establish Chrome DevTools connection for browser session") {
+            throw "Expected session-registration failure to propagate to acquisition."
+          }
+          if ($output -match "Test timed out in 20000ms") {
+            throw "Generic Vitest timeout fired before BrowserSession connect retry exhaustion."
+          }
+          $global:LASTEXITCODE = 0
+
+      - name: Reset and apply caller-abort proof
+        shell: bash
+        run: |
+          git checkout -- packages/miniflare/src/workers/browser-rendering/binding.worker.ts
+          node .fieldwork/browser-connect-timeout-proof-v2.mjs candidate
+          node .fieldwork/browser-connect-timeout-proof-v2.mjs stall
+          node .fieldwork/browser-connect-timeout-proof-v2.mjs caller-abort
+          git diff --check
+
+      - name: Rebuild caller-abort proof
+        run: pnpm -F miniflare build
+
+      - name: Prove caller abort wins over per-attempt timeout
+        shell: pwsh
+        run: |
+          & pnpm -F miniflare test:ci test/plugins/browser/index.spec.ts -t "it creates a browser session" *> fieldwork-connect-caller-abort.log
+          $testExit = $LASTEXITCODE
+          $output = Get-Content fieldwork-connect-caller-abort.log -Raw
+          Write-Host $output
+          if ($testExit -eq 0) {
+            throw "Expected injected BrowserSession caller cancellation to fail acquisition."
+          }
+          if ($output -notmatch "Injected BrowserSession caller cancellation") {
+            throw "Expected original caller cancellation reason to propagate."
+          }
+          if ($output -match "Chrome DevTools connection attempt timed out") {
+            throw "Per-attempt timeout won over caller cancellation."
+          }
+          if ($output -match "Test timed out in 20000ms") {
+            throw "Generic Vitest timeout won over caller cancellation."
+          }
+          $global:LASTEXITCODE = 0
