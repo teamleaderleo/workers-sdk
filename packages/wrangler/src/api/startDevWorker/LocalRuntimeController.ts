@@ -9,7 +9,12 @@ import {
 } from "@cloudflare/containers-shared";
 import { getDockerPath } from "@cloudflare/workers-utils";
 import chalk from "chalk";
-import { buildPublicUrl, Miniflare, Mutex } from "miniflare";
+import {
+	buildPublicUrl,
+	convertV4MiniflareOptions,
+	Miniflare,
+	Mutex,
+} from "miniflare";
 import * as MF from "../../dev/miniflare";
 import { logger } from "../../logger";
 import { RuntimeController } from "./BaseController";
@@ -211,6 +216,7 @@ export async function convertToConfigBundle(
 		containerEngine: event.config.dev.containerEngine,
 		enableContainers: event.config.dev.enableContainers ?? true,
 		zone: getZoneForCfWorkerHeader(event.config),
+		access: event.config.access,
 		sendMetrics: event.config.sendMetrics,
 		publicUrl: event.config.dev?.server?.port
 			? buildPublicUrl({
@@ -412,14 +418,15 @@ export class LocalRuntimeController extends RuntimeController {
 			if (id !== this.#currentBundleId) {
 				return;
 			}
+			const miniflareOptions = convertV4MiniflareOptions(options);
 
 			if (this.#mf === undefined) {
 				logger.log(chalk.dim("⎔ Starting local server..."));
-				this.#mf = new Miniflare(options);
+				this.#mf = new Miniflare(miniflareOptions);
 			} else {
 				logger.log(chalk.dim("⎔ Reloading local server..."));
 
-				await this.#mf.setOptions(options);
+				await this.#mf.setOptions(miniflareOptions);
 
 				logger.log(chalk.dim("⎔ Local server updated and ready"));
 			}

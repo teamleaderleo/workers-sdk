@@ -1,5 +1,120 @@
 # miniflare
 
+## 5.20260811.1-alpha
+
+### Minor Changes
+
+- [#15113](https://github.com/cloudflare/workers-sdk/pull/15113) [`b8fd112`](https://github.com/cloudflare/workers-sdk/commit/b8fd112136abf4ff17c3d456eaa7b22880bcaf6a) Thanks [@BSFishy](https://github.com/BSFishy)! - Add local dev simulation for Cloudflare Access `ctx.access.getIdentity()`
+
+  You can now configure a mock Cloudflare Access identity in `wrangler.json` so that `ctx.access.getIdentity()` returns it during local development.
+
+  ```jsonc
+  // wrangler.json
+  {
+    "access": {
+      "dev": {
+        "aud": "my-app-aud-tag",
+        "identity": {
+          "email": "user@example.com",
+          "name": "Test User"
+        }
+      }
+    }
+  }
+  ```
+
+## 5.20260811.0-alpha
+
+### Minor Changes
+
+- [#15123](https://github.com/cloudflare/workers-sdk/pull/15123) [`d0c976c`](https://github.com/cloudflare/workers-sdk/commit/d0c976c04ad890fcef56305ded11f1405e89273e) Thanks [@dependabot](https://github.com/apps/dependabot)! - Add local support for `WorkflowInstance.delete()` and `Workflow.deleteBatch()`
+
+  The updated `@cloudflare/workers-types` now requires `delete()` on workflow instances and `deleteBatch()` on the workflow binding. These methods are now implemented in the local workflows simulator so that local dev and tests match the production API.
+
+- [#15123](https://github.com/cloudflare/workers-sdk/pull/15123) [`d0c976c`](https://github.com/cloudflare/workers-sdk/commit/d0c976c04ad890fcef56305ded11f1405e89273e) Thanks [@dependabot](https://github.com/apps/dependabot)! - Detect Node.js compatibility from the compatibility date, now that `nodejs_compat` is enabled by default
+
+  As of compatibility date `2026-08-04`, workerd enables the `nodejs_compat` and `nodejs_compat_v2` compatibility flags by default. Previously these tools only treated Node.js compatibility as enabled when one of those flags was listed explicitly, so a Worker on a compatibility date of `2026-08-04` or later without the flag would get Node.js APIs from the runtime but no Node.js polyfills from the bundler, and `process.env` could be substituted with an empty object at build time. They now resolve these flags the same way workerd does, and honour `no_nodejs_compat` to opt out.
+
+  To keep Node.js compatibility switched off on a newer compatibility date, specify both `no_nodejs_compat` and `no_nodejs_compat_v2`, since each flag has its own default.
+
+  `@cloudflare/vitest-pool-workers` needs `nodejs_compat_v2` for its own test runner, so it continues to override a project that opts out of it. On a compatibility date that enables the flag anyway, it now drops the opt-out rather than adding the flag back, which workerd would reject — previously this stopped such a project from running any tests at all.
+
+  `wrangler types` also no longer attributes its `@types/node` suggestion to "the `nodejs_compat` flag", which it can now make for Workers that do not set the flag at all.
+
+### Patch Changes
+
+- [#15123](https://github.com/cloudflare/workers-sdk/pull/15123) [`d0c976c`](https://github.com/cloudflare/workers-sdk/commit/d0c976c04ad890fcef56305ded11f1405e89273e) Thanks [@dependabot](https://github.com/apps/dependabot)! - Update dependencies of "miniflare", "wrangler"
+
+  The following dependency versions have been updated:
+
+  | Dependency                | From          | To            |
+  | ------------------------- | ------------- | ------------- |
+  | @cloudflare/workers-types | ^5.20260804.1 | ^5.20260811.1 |
+  | workerd                   | 1.20260804.1  | 1.20260811.1  |
+
+- [#15148](https://github.com/cloudflare/workers-sdk/pull/15148) [`0b82b15`](https://github.com/cloudflare/workers-sdk/commit/0b82b1574b3327681a0091716ed274c8f0544a48) Thanks [@jamesopstad](https://github.com/jamesopstad)! - Ignore a `nodejs_compat` compatibility flag that the compatibility date already enables
+
+  workerd rejects a compatibility flag that its compatibility date enables by default, so a Worker configured with both a compatibility date of `2026-08-04` or later **and** `nodejs_compat` failed to start locally with "The compatibility flag nodejs_compat became the default as of 2026-08-04 so does not need to be specified anymore".
+
+  The redundant `nodejs_compat` and `nodejs_compat_v2` flags are now dropped when starting the runtime, which has no effect on the resulting Worker because the compatibility date enables both anyway. `no_nodejs_compat` and `no_nodejs_compat_v2` still switch Node.js compatibility off, and a flag specified alongside its own opt-out is left alone so that workerd still reports those as contradictory.
+
+- [#15131](https://github.com/cloudflare/workers-sdk/pull/15131) [`90dd5e5`](https://github.com/cloudflare/workers-sdk/commit/90dd5e597e3eeeb2ec17636386b75fea770cedc9) Thanks [@vicb](https://github.com/vicb)! - Bump `capnp-es` to 0.0.15.
+
+  Also re-generate the types for the latest `.capnp` files
+
+## 5.20260804.1-alpha
+
+### Patch Changes
+
+- [#14993](https://github.com/cloudflare/workers-sdk/pull/14993) [`c7aede7`](https://github.com/cloudflare/workers-sdk/commit/c7aede764b601d1b73aa208f6a6ff63f646f4136) Thanks [@petebacondarwin](https://github.com/petebacondarwin)! - Report failures to forward tail events between local dev sessions
+
+  When a Worker's tail consumer runs in a separate local dev session and that session becomes unreachable, the failure to deliver tail events was discarded silently. It is now reported as a warning.
+
+## 5.20260804.0-alpha
+
+### Major Changes
+
+- [#14994](https://github.com/cloudflare/workers-sdk/pull/14994) [`2194f88`](https://github.com/cloudflare/workers-sdk/commit/2194f888e53a987ee12c75f1f58f5af287e3c8a3) Thanks [@emily-shen](https://github.com/emily-shen)! - Replace Miniflare's options API with Cloudflare config-based worker options
+
+  `new Miniflare()` and `setOptions()` now require a `workers` array of worker entries. Binding, service, tail, remote, asset, workflow, unsafe binding, and other worker configuration now follows the schemas in `packages/miniflare/src/config/schema.ts`.
+
+  The previous flat options shape is no longer accepted directly. Existing v4-shaped options can be migrated with `convertV4MiniflareOptions()`.
+
+- [#14994](https://github.com/cloudflare/workers-sdk/pull/14994) [`2194f88`](https://github.com/cloudflare/workers-sdk/commit/2194f888e53a987ee12c75f1f58f5af287e3c8a3) Thanks [@emily-shen](https://github.com/emily-shen)! - Change the Miniflare plugin API
+
+  Plugins now receive parsed Miniflare worker and instance config instead of per-plugin option slices. Per-plugin option schema exports have been removed; unsafe plugin authors should read bindings, exports, and triggers from the parsed config passed to plugin hooks.
+
+- [#14994](https://github.com/cloudflare/workers-sdk/pull/14994) [`2194f88`](https://github.com/cloudflare/workers-sdk/commit/2194f888e53a987ee12c75f1f58f5af287e3c8a3) Thanks [@emily-shen](https://github.com/emily-shen)! - Remove automatic module graph discovery
+
+  Miniflare no longer discovers Worker modules from `modules: true` and `modulesRules`. Module workers must provide their module graph through the config manifest. Existing v4-shaped options can be migrated with `convertV4MiniflareOptions()`, but `modulesRules` cannot be converted without losing behavior.
+
+- [#14994](https://github.com/cloudflare/workers-sdk/pull/14994) [`2194f88`](https://github.com/cloudflare/workers-sdk/commit/2194f888e53a987ee12c75f1f58f5af287e3c8a3) Thanks [@emily-shen](https://github.com/emily-shen)! - Remove internal or redundant options from Miniflare's config
+
+  Miniflare no longer accepts service designator objects such as `{ network }`, `{ external }`, and `{ disk }` on `outboundService`, `tails`, or `streamingTails`.
+
+  Miniflare also no longer supports `unsafeExcludeFromObservability`, which has been dropped in favour of `unsafeRegisterWorker`.
+
+- [#14994](https://github.com/cloudflare/workers-sdk/pull/14994) [`2194f88`](https://github.com/cloudflare/workers-sdk/commit/2194f888e53a987ee12c75f1f58f5af287e3c8a3) Thanks [@emily-shen](https://github.com/emily-shen)! - Remove support for legacy alpha D1 (`__D1_BETA__`) bindings
+
+  Miniflare no longer supports deprecated beta D1 instances created before `wrangler@3.3.0`.
+
+### Minor Changes
+
+- [#14994](https://github.com/cloudflare/workers-sdk/pull/14994) [`2194f88`](https://github.com/cloudflare/workers-sdk/commit/2194f888e53a987ee12c75f1f58f5af287e3c8a3) Thanks [@emily-shen](https://github.com/emily-shen)! - Add `convertV4MiniflareOptions` for migrating Miniflare v4 options
+
+  You can now convert v4-shaped Miniflare options to the config-based `workers` shape before creating or updating a Miniflare instance. Some v4 options cannot be converted without losing behavior and will throw an error instead.
+
+### Patch Changes
+
+- [#15072](https://github.com/cloudflare/workers-sdk/pull/15072) [`6dbd192`](https://github.com/cloudflare/workers-sdk/commit/6dbd192f1f3e4899789cd327231ba838c90bb0d5) Thanks [@dependabot](https://github.com/apps/dependabot)! - Update dependencies of "miniflare", "wrangler"
+
+  The following dependency versions have been updated:
+
+  | Dependency                | From          | To            |
+  | ------------------------- | ------------- | ------------- |
+  | @cloudflare/workers-types | ^5.20260801.1 | ^5.20260804.1 |
+  | workerd                   | 1.20260801.1  | 1.20260804.1  |
+
 ## 5.20260801.1-alpha
 
 ### Minor Changes

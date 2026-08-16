@@ -14,6 +14,11 @@ export {
 	hasDurableObjectExports,
 } from "./config/durable-object-exports";
 export {
+	getContainerDurableObjectClassNames,
+	getContainerNameToClassNameMap,
+	resolveContainerClassName,
+} from "./config/containers";
+export {
 	type RedirectedRawConfig,
 	defaultWranglerConfig,
 } from "./config/config";
@@ -113,8 +118,17 @@ export {
 } from "./global-wrangler-config-path";
 export type { GetGlobalConfigPathOptions } from "./global-wrangler-config-path";
 
-export { isCompatDate, getTodaysCompatDate } from "./compatibility-date";
+export {
+	isCompatDate,
+	getTodaysCompatDate,
+	isNodejsCompatDefaultOn,
+	NODEJS_COMPAT_DEFAULT_ON_DATE,
+	NODEJS_COMPAT_V2_SWITCH_OVER_DATE,
+	resolveNodejsCompat,
+	stripRedundantNodejsCompatFlags,
+} from "./compatibility-date";
 export type { CompatDate } from "./compatibility-date";
+export { DEFAULT_COMPAT_DATE } from "./default-compat-date";
 
 export { isDockerfile } from "./config/validation";
 
